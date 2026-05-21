@@ -1,67 +1,185 @@
 import { useEffect, useState } from 'react'
 
-// Hello-world popup. Confirms the build pipeline works end-to-end:
-//   - React renders inside the MV3 popup,
-//   - chrome.* APIs are reachable from the popup process,
-//   - clicks update state.
-// Real UI lands in Step 1.
-export function App() {
-  const [tabTitle, setTabTitle] = useState<string>('(reading current tab…)')
-  const [clicks, setClicks] = useState<number>(0)
+import { extractFromActiveTab } from '../lib/extractor'
+import type { ExtractedArticle } from '../lib/types'
 
+type ExtractState =
+  | { kind: 'idle' }
+  | { kind: 'loading' }
+  | { kind: 'ok'; article: ExtractedArticle }
+  | { kind: 'error'; message: string }
+
+const PREVIEW_CHARS = 2000
+
+export function App() {
+  const [state, setState] = useState<ExtractState>({ kind: 'idle' })
+
+  async function runExtract(): Promise<void> {
+    setState({ kind: 'loading' })
+    try {
+      const article = await extractFromActiveTab()
+      setState({ kind: 'ok', article })
+    } catch (e) {
+      setState({
+        kind: 'error',
+        message: e instanceof Error ? e.message : 'Unknown error.',
+      })
+    }
+  }
+
+  // Auto-extract when the popup opens — saves a click.
   useEffect(() => {
-    chrome.tabs
-      .query({ active: true, currentWindow: true })
-      .then(([tab]) => setTabTitle(tab?.title ?? '(no title)'))
-      .catch(() => setTabTitle('(could not read tab)'))
+    void runExtract()
   }, [])
 
   return (
     <div
       style={{
-        padding: 16,
+        padding: 14,
         fontFamily:
           '-apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif',
-        minWidth: 320,
+        minWidth: 380,
+        maxWidth: 440,
         color: '#222',
       }}
     >
-      <h1 style={{ fontSize: 15, fontWeight: 600, margin: '0 0 6px' }}>
-        RSVP Nano Web Clipper
-      </h1>
-      <p style={{ fontSize: 12, color: '#666', margin: '0 0 14px' }}>
-        Scaffolded · not wired to the device yet
-      </p>
+      <header style={{ marginBottom: 12 }}>
+        <h1 style={{ fontSize: 14, fontWeight: 600, margin: '0 0 2px' }}>
+          RSVP Nano Web Clipper
+        </h1>
+        <div style={{ fontSize: 11, color: '#888' }}>
+          Step 1 · extraction preview · no transfer yet
+        </div>
+      </header>
 
-      <div
-        style={{
-          fontSize: 12,
-          margin: '0 0 14px',
-          padding: '8px 10px',
-          background: '#fff',
-          border: '1px solid #eee',
-          borderRadius: 6,
-        }}
-      >
-        <div style={{ color: '#888', marginBottom: 4 }}>Current tab</div>
-        <div style={{ wordBreak: 'break-word' }}>{tabTitle}</div>
+      {state.kind === 'loading' && (
+        <div style={statusBoxStyle}>Extracting article…</div>
+      )}
+
+      {state.kind === 'error' && (
+        <ErrorBlock message={state.message} onRetry={runExtract} />
+      )}
+
+      {state.kind === 'ok' && (
+        <ArticleBlock article={state.article} onRetry={runExtract} />
+      )}
+    </div>
+  )
+}
+
+function ArticleBlock({
+  article,
+  onRetry,
+}: {
+  article: ExtractedArticle
+  onRetry: () => void
+}): React.ReactElement {
+  const words = countWords(article.textContent)
+  return (
+    <div>
+      <div style={metaCardStyle}>
+        <div style={{ fontSize: 13, fontWeight: 600, lineHeight: 1.35 }}>
+          {article.title}
+        </div>
+        {article.byline && (
+          <div style={{ fontSize: 11, color: '#666', marginTop: 4 }}>
+            {article.byline}
+          </div>
+        )}
+        <div style={{ fontSize: 11, color: '#888', marginTop: 6 }}>
+          {words.toLocaleString()} words · {article.length.toLocaleString()}{' '}
+          chars
+          {article.siteName ? ` · ${article.siteName}` : ''}
+          {' · '}
+          <span
+            style={{ color: article.readerable ? '#0a7c2a' : '#a05500' }}
+            title="Readability's own heuristic for whether this page looks like an article."
+          >
+            {article.readerable ? 'reader-friendly ✓' : 'not reader-friendly ⚠'}
+          </span>
+        </div>
       </div>
 
-      <button
-        type="button"
-        onClick={() => setClicks((c) => c + 1)}
-        style={{
-          width: '100%',
-          padding: '8px 12px',
-          fontSize: 13,
-          border: '1px solid #c8c8c8',
-          borderRadius: 6,
-          background: '#f5f5f5',
-          cursor: 'pointer',
-        }}
-      >
-        Hello world (clicks: {clicks})
+      <pre style={previewStyle}>
+        {article.textContent.slice(0, PREVIEW_CHARS)}
+        {article.textContent.length > PREVIEW_CHARS ? '\n…' : ''}
+      </pre>
+
+      <button type="button" onClick={onRetry} style={buttonStyle}>
+        Re-extract
       </button>
     </div>
   )
+}
+
+function ErrorBlock({
+  message,
+  onRetry,
+}: {
+  message: string
+  onRetry: () => void
+}): React.ReactElement {
+  return (
+    <div>
+      <div
+        style={{
+          ...statusBoxStyle,
+          background: '#fff5f5',
+          borderColor: '#f0c8c8',
+          color: '#a02020',
+        }}
+      >
+        {message}
+      </div>
+      <button type="button" onClick={onRetry} style={buttonStyle}>
+        Try again
+      </button>
+    </div>
+  )
+}
+
+const statusBoxStyle: React.CSSProperties = {
+  fontSize: 12,
+  padding: '10px 12px',
+  background: '#fff',
+  border: '1px solid #eee',
+  borderRadius: 6,
+  marginBottom: 10,
+}
+
+const metaCardStyle: React.CSSProperties = {
+  padding: '10px 12px',
+  background: '#fff',
+  border: '1px solid #eee',
+  borderRadius: 6,
+  marginBottom: 8,
+}
+
+const previewStyle: React.CSSProperties = {
+  maxHeight: 260,
+  overflow: 'auto',
+  fontSize: 11,
+  lineHeight: 1.45,
+  whiteSpace: 'pre-wrap',
+  margin: '0 0 10px',
+  padding: '10px 12px',
+  background: '#fff',
+  border: '1px solid #eee',
+  borderRadius: 6,
+  fontFamily:
+    'ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace',
+}
+
+const buttonStyle: React.CSSProperties = {
+  width: '100%',
+  padding: '8px 12px',
+  fontSize: 13,
+  border: '1px solid #c8c8c8',
+  borderRadius: 6,
+  background: '#f5f5f5',
+  cursor: 'pointer',
+}
+
+function countWords(text: string): number {
+  return text.split(/\s+/).filter(Boolean).length
 }
