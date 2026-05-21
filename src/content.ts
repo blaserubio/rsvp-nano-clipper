@@ -8,23 +8,42 @@ import DOMPurify from 'dompurify'
 
 import type { ExtractRequest, ExtractResponse, ExtractedArticle } from './lib/types'
 
-chrome.runtime.onMessage.addListener((message: ExtractRequest, _sender, sendResponse) => {
-  if (message?.type !== 'extract') {
-    return false
-  }
-  try {
-    const article = extractArticle()
-    sendResponse({ ok: true, article } satisfies ExtractResponse)
-  } catch (e) {
-    sendResponse({
-      ok: false,
-      error: e instanceof Error ? e.message : 'Unknown extraction error.',
-    } satisfies ExtractResponse)
-  }
-  // Returning true keeps the message channel open for async sendResponse calls.
-  // Our extraction here is synchronous, but signalling true is harmless.
-  return true
-})
+// The content script can arrive on a page two ways: the manifest's
+// content_scripts auto-injection (on page load) AND a programmatic
+// chrome.scripting.executeScript injection from the popup (for pages that were
+// already open). Without this guard, both paths register the listener and the
+// extraction would run twice — once for each registration.
+const FLAG = '__rsvpNanoClipperLoaded'
+type GlobalWithFlag = { [FLAG]?: true }
+const win = window as unknown as GlobalWithFlag
+
+if (win[FLAG]) {
+  console.log('[RSVP Nano Clipper] content script already loaded; skipping')
+} else {
+  win[FLAG] = true
+
+  chrome.runtime.onMessage.addListener(
+    (message: ExtractRequest, _sender, sendResponse) => {
+      if (message?.type !== 'extract') {
+        return false
+      }
+      try {
+        const article = extractArticle()
+        sendResponse({ ok: true, article } satisfies ExtractResponse)
+      } catch (e) {
+        sendResponse({
+          ok: false,
+          error: e instanceof Error ? e.message : 'Unknown extraction error.',
+        } satisfies ExtractResponse)
+      }
+      // Returning true keeps the message channel open for async sendResponse
+      // calls. Our extraction is synchronous, but signalling true is harmless.
+      return true
+    },
+  )
+
+  console.log('[RSVP Nano Clipper] content script ready on', location.href)
+}
 
 function extractArticle(): ExtractedArticle {
   // Readability mutates the document it's given, so clone the live DOM first.
@@ -56,5 +75,3 @@ function extractArticle(): ExtractedArticle {
     readerable: isProbablyReaderable(document),
   }
 }
-
-console.log('[RSVP Nano Clipper] content script ready on', location.href)

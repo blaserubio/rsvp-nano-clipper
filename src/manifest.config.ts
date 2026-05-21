@@ -22,7 +22,7 @@ export default defineManifest({
       run_at: 'document_idle',
     },
   ],
-  permissions: ['activeTab', 'contextMenus', 'storage', 'alarms'],
+  permissions: ['activeTab', 'scripting', 'contextMenus', 'storage', 'alarms'],
   host_permissions: ['http://192.168.4.1/*'],
   optional_host_permissions: ['http://*/*', 'https://*/*'],
   commands: {
