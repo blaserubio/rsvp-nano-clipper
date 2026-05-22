@@ -24,11 +24,18 @@ type ExtractState =
   | { kind: 'ok'; article: ExtractedArticle }
   | { kind: 'error'; message: string }
 
+type ReaderStatus =
+  | { kind: 'idle' }
+  | { kind: 'checking' }
+  | { kind: 'online'; info: DeviceInfo }
+  | { kind: 'offline'; reason: string }
+
 const PREVIEW_CHARS = 4000
 
 export function App() {
   const [extract, setExtract] = useState<ExtractState>({ kind: 'idle' })
   const [settings, setSettings] = useState<Settings | null>(null)
+  const [readerStatus, setReaderStatus] = useState<ReaderStatus>({ kind: 'idle' })
 
   async function runExtract(): Promise<void> {
     setExtract({ kind: 'loading' })
@@ -43,9 +50,32 @@ export function App() {
     }
   }
 
+  // Quick liveness ping on the configured endpoint. Updates the badge in the
+  // Settings header so the user sees Wi-Fi state BEFORE clicking Send.
+  async function checkReader(endpoint: string): Promise<void> {
+    setReaderStatus({ kind: 'checking' })
+    const res = await fetchDeviceInfo(endpoint)
+    if (res.kind === 'ok') {
+      setReaderStatus({ kind: 'online', info: res.info })
+    } else if (res.kind === 'unreachable' || res.kind === 'timeout') {
+      setReaderStatus({
+        kind: 'offline',
+        reason:
+          res.kind === 'timeout'
+            ? "Reader didn't respond. Are you on its Wi-Fi (RSVP-Nano-xxxxxx)?"
+            : 'Switch to the reader\'s Wi-Fi (RSVP-Nano-xxxxxx) and re-open this popup.',
+      })
+    } else {
+      setReaderStatus({ kind: 'offline', reason: res.message })
+    }
+  }
+
   useEffect(() => {
     void runExtract()
-    void loadSettings().then(setSettings)
+    void loadSettings().then((s) => {
+      setSettings(s)
+      void checkReader(s.endpoint)
+    })
   }, [])
 
   return (
@@ -70,7 +100,14 @@ export function App() {
 
       <SettingsPanel
         settings={settings}
-        onChange={(next) => setSettings(next)}
+        status={readerStatus}
+        onChange={(next) => {
+          setSettings(next)
+          void checkReader(next.endpoint)
+        }}
+        onRecheck={() => {
+          if (settings) void checkReader(settings.endpoint)
+        }}
       />
 
       {extract.kind === 'loading' && (
@@ -86,6 +123,9 @@ export function App() {
           article={extract.article}
           endpoint={settings?.endpoint ?? DEFAULT_ENDPOINT}
           onRetry={runExtract}
+          onSendComplete={() => {
+            if (settings) void checkReader(settings.endpoint)
+          }}
         />
       )}
     </div>
@@ -98,10 +138,14 @@ export function App() {
 
 function SettingsPanel({
   settings,
+  status,
   onChange,
+  onRecheck,
 }: {
   settings: Settings | null
+  status: ReaderStatus
   onChange: (next: Settings) => void
+  onRecheck: () => void
 }): React.ReactElement {
   const [open, setOpen] = useState(false)
   const [draft, setDraft] = useState('')
@@ -230,13 +274,47 @@ function SettingsPanel({
         style={settingsHeaderStyle}
         title="Configure the device endpoint"
       >
-        <span>⚙️ Reader endpoint</span>
-        <span style={{ color: '#666', fontSize: 11 }}>
+        <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span>⚙️ Reader</span>
+          <ReaderStatusBadge status={status} />
+        </span>
+        <span style={{ color: '#888', fontSize: 10, fontFamily: 'ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace' }}>
           {currentEndpoint}
-          {isCustom ? ' · custom' : ' · default'}
           <span style={{ marginLeft: 6, color: '#aaa' }}>{open ? '▾' : '▸'}</span>
         </span>
       </button>
+      {!open && status.kind === 'offline' && (
+        <div
+          style={{
+            padding: '6px 12px',
+            background: '#fff8e6',
+            borderBottom: '1px solid #eee',
+            fontSize: 11,
+            color: '#8a5a00',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: 8,
+          }}
+        >
+          <span>⚠ {status.reason}</span>
+          <button
+            type="button"
+            onClick={onRecheck}
+            style={{
+              padding: '3px 8px',
+              fontSize: 10,
+              border: '1px solid #d8c590',
+              background: '#fff',
+              borderRadius: 4,
+              cursor: 'pointer',
+              flexShrink: 0,
+            }}
+          >
+            Re-check
+          </button>
+        </div>
+      )}
 
       {open && (
         <div style={{ padding: '10px 12px' }}>
@@ -305,6 +383,50 @@ function SettingsPanel({
 }
 
 // ---------------------------------------------------------------------------
+// Reader-status badge — a small pill in the Settings header that surfaces the
+// result of the popup-on-open /api/info ping. Lets the user see Wi-Fi state
+// BEFORE clicking Send rather than discovering it ~8 s later.
+// ---------------------------------------------------------------------------
+
+function ReaderStatusBadge({ status }: { status: ReaderStatus }): React.ReactElement {
+  const base: React.CSSProperties = {
+    fontSize: 10,
+    fontWeight: 600,
+    padding: '2px 7px',
+    borderRadius: 10,
+    whiteSpace: 'nowrap',
+  }
+  if (status.kind === 'checking') {
+    return (
+      <span style={{ ...base, background: '#eef0f3', color: '#666', border: '1px solid #dde0e4' }}>
+        Checking…
+      </span>
+    )
+  }
+  if (status.kind === 'online') {
+    return (
+      <span
+        style={{ ...base, background: '#e8f7ec', color: '#1e6a30', border: '1px solid #cfe8d4' }}
+        title={`Reader reachable at ${status.info.name}`}
+      >
+        ✓ {status.info.name}
+      </span>
+    )
+  }
+  if (status.kind === 'offline') {
+    return (
+      <span
+        style={{ ...base, background: '#fff3d6', color: '#8a5a00', border: '1px solid #efd99a' }}
+        title={status.reason}
+      >
+        ⚠ Offline
+      </span>
+    )
+  }
+  return <span />
+}
+
+// ---------------------------------------------------------------------------
 // Article block — extraction meta, Send (primary), highlight, preview,
 // Download (secondary), Re-extract.
 // ---------------------------------------------------------------------------
@@ -319,10 +441,12 @@ function ArticleBlock({
   article,
   endpoint,
   onRetry,
+  onSendComplete,
 }: {
   article: ExtractedArticle
   endpoint: string
   onRetry: () => void
+  onSendComplete?: () => void
 }): React.ReactElement {
   const words = countWords(article.textContent)
   const [send, setSend] = useState<SendState>({ kind: 'idle' })
@@ -382,15 +506,23 @@ function ArticleBlock({
       const deviceName =
         infoRes && infoRes.kind === 'ok' ? infoRes.info.name : undefined
       setSend({ kind: 'sent', deviceName, savedAs: result.filename })
+      onSendComplete?.()
       return
     }
 
     let message: string
     if (result.kind === 'unreachable') {
+      // The #1 cause: user isn't joined to the reader's Wi-Fi network. Lead
+      // with that. The endpoint URL is in the Settings header already.
       message =
-        `Reader unreachable at ${endpoint}. Open Companion sync on the reader and join its Wi-Fi (RSVP-Nano-xxxxxx).`
+        `Reader not reachable. Switch your computer's Wi-Fi to RSVP-Nano-xxxxxx ` +
+        `(the network the reader broadcasts in Companion sync mode) and click Retry send.`
     } else if (result.kind === 'timeout') {
-      message = `Reader did not respond within ${Math.round(result.timeoutMs / 1000)}s.`
+      // Slow hang usually means our IP is being answered by an unrelated host
+      // on the user's home network (their home router at 192.168.4.1 etc.).
+      message =
+        `Reader didn't respond in ${Math.round(result.timeoutMs / 1000)}s. ` +
+        `You're probably on the wrong Wi-Fi — switch to RSVP-Nano-xxxxxx and click Retry send.`
     } else if (result.kind === 'rejected') {
       message = `Reader rejected the upload (HTTP ${result.status}): ${result.message}`
     } else {

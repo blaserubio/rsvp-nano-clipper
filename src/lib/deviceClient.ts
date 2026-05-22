@@ -12,8 +12,15 @@
 
 import type { DeviceInfo, RsvpFileForUpload, UploadResult } from './types'
 
-export const UPLOAD_TIMEOUT_MS = 15_000
-export const INFO_TIMEOUT_MS = 8_000
+// Failures on a LAN are usually instant TypeErrors ("Failed to fetch") rather
+// than slow timeouts. The case where the timeout actually fires is when the
+// configured IP happens to be answered by an unrelated host on the user's
+// regular Wi-Fi (e.g. their home router lives at 192.168.4.1 too): the TCP
+// handshake succeeds but the device-style HTTP request hangs. Keep the
+// timeouts short so that misconfigured-Wi-Fi failures don't burn 15 s before
+// the user sees a hint.
+export const UPLOAD_TIMEOUT_MS = 8_000
+export const INFO_TIMEOUT_MS = 4_000
 
 /**
  * POST a converted .rsvp file to the device's /api/books endpoint.
