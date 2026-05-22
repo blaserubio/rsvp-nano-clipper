@@ -11,7 +11,7 @@ import DOMPurify from 'dompurify'
 import {
   clickExpandButtons,
   cleanArticleText,
-  extractByLargestParagraphContainer,
+  extractAllArticleParagraphs,
   removeJunkNodes,
   warmUpPage,
 } from './lib/pageHelpers'
@@ -98,7 +98,7 @@ async function extractArticle(): Promise<ExtractedArticle> {
   const readabilityClean = cleanArticleText(readabilityRaw)
   const readabilityWords = countWords(readabilityClean)
 
-  const fallbackRaw = extractByLargestParagraphContainer().text
+  const fallbackRaw = extractAllArticleParagraphs().text
   const fallbackClean = cleanArticleText(fallbackRaw)
   const fallbackWords = countWords(fallbackClean)
 

@@ -349,10 +349,110 @@ export interface FallbackExtraction {
 
 const MIN_PARA_CHARS = 40 // ignore tiny <p>s — usually captions or menu items
 
+/**
+ * Locate the article container(s) on the page. Prefers <article> elements,
+ * which most modern news sites (Yahoo Finance, NYT, BBC, …) use to wrap the
+ * main article body. Returns multiple containers only when the page legibly
+ * has more than one article-sized chunk; the cluster-based fallback handles
+ * pages with no <article> at all.
+ */
+function findArticleContainers(): Element[] {
+  const articles = Array.from(document.querySelectorAll('article'))
+  if (articles.length === 0) return []
+  if (articles.length === 1) return articles
+
+  // Multiple <article> elements (Yahoo and similar pages list related stories
+  // as their own <article> cards). Score each by total length of substantive
+  // paragraph text; drop ones below a noise floor.
+  const scored = articles
+    .map((el) => {
+      let score = 0
+      for (const p of el.querySelectorAll('p')) {
+        const len = ((p as HTMLElement).innerText ?? '').trim().length
+        if (len >= MIN_PARA_CHARS) score += len
+      }
+      return { el, score }
+    })
+    .filter((s) => s.score >= 300)
+
+  if (scored.length === 0) {
+    // Nothing met the noise floor — fall back to the largest <article> by
+    // raw text size, just to have something.
+    let best: Element | null = null
+    let bestLen = 0
+    for (const a of articles) {
+      const len = (a.textContent ?? '').length
+      if (len > bestLen) {
+        best = a
+        bestLen = len
+      }
+    }
+    return best ? [best] : []
+  }
+
+  scored.sort((a, b) => b.score - a.score)
+  const total = scored.reduce((s, x) => s + x.score, 0)
+  // If one article dominates the page, just use it. Otherwise we may have a
+  // legitimately split article; include any container scoring within ~30% of
+  // the top.
+  if (scored[0].score / total >= 0.8) return [scored[0].el]
+  const cutoff = scored[0].score * 0.3
+  return scored.filter((s) => s.score >= cutoff).map((s) => s.el)
+}
+
+/**
+ * Comprehensive fallback: walks the article container(s) in document order
+ * and collects every paragraph, heading, list item, and blockquote that
+ * survives the junk filter. This is what makes us robust on ad-heavy,
+ * multi-section pages (Yahoo Finance, MSN, etc.) where Readability silently
+ * drops everything after the first interleaved ad/widget.
+ *
+ * Falls back to extractByLargestParagraphContainer for pages without any
+ * <article> element.
+ */
+export function extractAllArticleParagraphs(): FallbackExtraction {
+  const containers = findArticleContainers()
+  if (containers.length === 0) {
+    return extractByLargestParagraphContainer()
+  }
+
+  const articleRoot = document.querySelector('article')
+  const seen = new Set<string>()
+  const lines: string[] = []
+  let paragraphCount = 0
+
+  for (const container of containers) {
+    const blocks = container.querySelectorAll(
+      'p, h1, h2, h3, h4, h5, h6, li, blockquote',
+    )
+    for (const block of blocks) {
+      if (hasJunkAncestor(block, articleRoot)) continue
+      const text = ((block as HTMLElement).innerText ?? '').trim()
+      if (block.tagName === 'P' || block.tagName === 'LI' || block.tagName === 'BLOCKQUOTE') {
+        if (text.length < 20) continue
+        if (block.tagName === 'P') paragraphCount++
+      } else {
+        // heading
+        if (text.length === 0) continue
+      }
+      // De-dupe in case nested containers expose the same paragraph twice,
+      // or two scored containers happen to overlap.
+      const sig = text.slice(0, 100).toLowerCase().replace(/\s+/g, ' ')
+      if (seen.has(sig)) continue
+      seen.add(sig)
+      lines.push(text)
+    }
+  }
+  return { text: lines.join('\n\n'), paragraphCount }
+}
+
+/**
+ * Cluster-based fallback (the pre-existing strategy): for pages without an
+ * <article> element, pick the DOM ancestor that contains the most paragraph
+ * text and return its paragraphs and headings in document order.
+ */
 export function extractByLargestParagraphContainer(): FallbackExtraction {
   const articleRoot = document.querySelector('article')
-  // Score every "reasonable" ancestor by total paragraph text it contains,
-  // but only for paragraphs that aren't inside something junky.
   const scores = new Map<Element, number>()
   const allParas = document.querySelectorAll('p')
   for (const p of allParas) {
