@@ -172,6 +172,27 @@ function classAndIdText(el: Element): string {
   return `${className.toLowerCase()} ${(el.id ?? '').toLowerCase()}`
 }
 
+/**
+ * A <p> whose visible text is mostly inside <a> tags is almost certainly a
+ * promo, "read more", site-nav, or footer link — not article prose. This is
+ * a powerful general catch-all for boilerplate that doesn't carry any
+ * distinctive class/id attribute (e.g. Yahoo Finance's
+ * "Click here for in-depth analysis…" or "Read the latest … from Yahoo
+ * Finance" footer paragraphs that hide in the article container).
+ */
+function isLinkDominatedParagraph(el: Element): boolean {
+  if (el.tagName !== 'P') return false
+  const total = ((el as HTMLElement).innerText ?? el.textContent ?? '').trim()
+    .length
+  if (total < 20) return false
+  let linkChars = 0
+  for (const a of el.querySelectorAll('a')) {
+    linkChars += ((a as HTMLElement).innerText ?? a.textContent ?? '').trim()
+      .length
+  }
+  return linkChars / total >= 0.7
+}
+
 export function isJunkElement(el: Element, articleRoot?: Element | null): boolean {
   const tag = el.tagName
   if (ALWAYS_JUNK_TAGS.has(tag)) return true
@@ -202,7 +223,12 @@ export function isJunkElement(el: Element, articleRoot?: Element | null): boolea
     if (/(^|[\s_-])ads?(?=$|[\s_-])/i.test(attrText(el, 'data-testid'))) return true
   }
 
-  return JUNK_CLASS_ID_REGEX.test(classAndIdText(el))
+  if (JUNK_CLASS_ID_REGEX.test(classAndIdText(el))) return true
+
+  // Last line of defence: link-dominated promo paragraphs.
+  if (isLinkDominatedParagraph(el)) return true
+
+  return false
 }
 
 /**
@@ -261,7 +287,17 @@ const TEXT_JUNK_PATTERNS: RegExp[] = [
   /^follow us on/i,
   /^share this (article|story|post)/i,
   /^(read|related|see also|also read|more from|read more)\s*[:\-—]/i,
-  /^click here to/i,
+  // Promo / footer link prose ("Click here for…", "Read the latest …
+  // from Yahoo Finance", "More from MSN", etc.)
+  /^click (here|below)\b/i,
+  /^read (the |our )?(latest|more|further|next|previous|full|rest)\b/i,
+  /^get (the |our |more |today's |tomorrow's )/i,
+  /\b(latest|more|breaking) (news|stories|articles|coverage|analysis) from\b/i,
+  /^see (more|all|also)\b/i,
+  /^visit (us|our|the)\b/i,
+  /^learn more (about|here)\b/i,
+  /^explore (more|the|our)\b/i,
+  /^check out (the|our|more)\b/i,
   /this article (originally|first) appeared on/i,
   /we may earn (a )?commission/i,
   /^affiliate links?/i,
