@@ -16,6 +16,14 @@ export interface ExtractedArticle {
   url: string
   /** Readability's own heuristic: does this page look like an article? */
   readerable: boolean
+  /** Which extractor produced the final body. Useful for debugging. */
+  method: 'readability' | 'fallback'
+  /** Extraction diagnostics — word counts for the two paths. */
+  diagnostics: {
+    readabilityWords: number
+    fallbackWords: number
+    expandersClicked: number
+  }
 }
 
 // --- Messages between extension surfaces -----------------------------------

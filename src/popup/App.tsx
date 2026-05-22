@@ -9,7 +9,7 @@ type ExtractState =
   | { kind: 'ok'; article: ExtractedArticle }
   | { kind: 'error'; message: string }
 
-const PREVIEW_CHARS = 2000
+const PREVIEW_CHARS = 4000
 
 export function App() {
   const [state, setState] = useState<ExtractState>({ kind: 'idle' })
@@ -97,6 +97,16 @@ function ArticleBlock({
           >
             {article.readerable ? 'reader-friendly ✓' : 'not reader-friendly ⚠'}
           </span>
+        </div>
+        <div style={{ fontSize: 10, color: '#999', marginTop: 4 }}>
+          method:{' '}
+          <strong style={{ color: '#555' }}>{article.method}</strong>
+          {' · '}
+          readability {article.diagnostics.readabilityWords.toLocaleString()} w
+          {' / '}
+          fallback {article.diagnostics.fallbackWords.toLocaleString()} w
+          {article.diagnostics.expandersClicked > 0 &&
+            ` · clicked ${article.diagnostics.expandersClicked} expander${article.diagnostics.expandersClicked === 1 ? '' : 's'}`}
         </div>
       </div>
 
