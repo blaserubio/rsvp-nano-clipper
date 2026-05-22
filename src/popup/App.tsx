@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 
 import { extractFromActiveTab } from '../lib/extractor'
+import { articleToRsvp } from '../lib/rsvpFormat'
 import type { ExtractedArticle } from '../lib/types'
 
 type ExtractState =
@@ -75,6 +76,26 @@ function ArticleBlock({
   onRetry: () => void
 }): React.ReactElement {
   const words = countWords(article.textContent)
+  const [downloadMsg, setDownloadMsg] = useState<
+    { tone: 'ok' | 'err'; text: string } | null
+  >(null)
+
+  function handleDownload(): void {
+    try {
+      const rsvp = articleToRsvp(article)
+      triggerDownload(rsvp.filename, rsvp.content)
+      setDownloadMsg({
+        tone: 'ok',
+        text: `Saved ${rsvp.filename} · ${rsvp.wordCount.toLocaleString()} words, ${rsvp.chapterCount} chapter${rsvp.chapterCount === 1 ? '' : 's'}`,
+      })
+    } catch (e) {
+      setDownloadMsg({
+        tone: 'err',
+        text: e instanceof Error ? e.message : 'Download failed.',
+      })
+    }
+  }
+
   return (
     <div>
       <div style={metaCardStyle}>
@@ -117,11 +138,51 @@ function ArticleBlock({
         {article.textContent.length > PREVIEW_CHARS ? '\n…' : ''}
       </pre>
 
+      <button type="button" onClick={handleDownload} style={primaryButtonStyle}>
+        Download .rsvp
+      </button>
+
+      {downloadMsg && (
+        <div
+          style={{
+            ...statusBoxStyle,
+            marginTop: 8,
+            marginBottom: 8,
+            background: downloadMsg.tone === 'ok' ? '#f0faf0' : '#fff5f5',
+            borderColor: downloadMsg.tone === 'ok' ? '#cce6cc' : '#f0c8c8',
+            color: downloadMsg.tone === 'ok' ? '#1e5e1e' : '#a02020',
+            fontSize: 11,
+            lineHeight: 1.4,
+          }}
+        >
+          {downloadMsg.text}
+          {downloadMsg.tone === 'ok' && (
+            <div style={{ marginTop: 4, color: '#666' }}>
+              Open Companion sync on your reader, then drop this file into the Books page.
+            </div>
+          )}
+        </div>
+      )}
+
       <button type="button" onClick={onRetry} style={buttonStyle}>
         Re-extract
       </button>
     </div>
   )
+}
+
+function triggerDownload(filename: string, content: string): void {
+  const blob = new Blob([content], { type: 'text/plain;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  a.style.display = 'none'
+  document.body.appendChild(a)
+  a.click()
+  document.body.removeChild(a)
+  // Give the browser a moment to start the download before releasing the URL.
+  setTimeout(() => URL.revokeObjectURL(url), 1000)
 }
 
 function ErrorBlock({
@@ -190,6 +251,14 @@ const buttonStyle: React.CSSProperties = {
   borderRadius: 6,
   background: '#f5f5f5',
   cursor: 'pointer',
+}
+
+const primaryButtonStyle: React.CSSProperties = {
+  ...buttonStyle,
+  background: '#1f6feb',
+  borderColor: '#1158c7',
+  color: 'white',
+  fontWeight: 600,
 }
 
 function countWords(text: string): number {
