@@ -8,7 +8,9 @@ import DOMPurify from 'dompurify'
 
 import {
   clickExpandButtons,
+  cleanArticleText,
   extractByLargestParagraphContainer,
+  removeJunkNodes,
   warmUpPage,
 } from './lib/pageHelpers'
 import type { ExtractRequest, ExtractResponse, ExtractedArticle } from './lib/types'
@@ -51,48 +53,48 @@ async function extractArticle(): Promise<ExtractedArticle> {
   const expandersClicked = clickExpandButtons()
   await warmUpPage()
 
-  // Readability pass.
+  // Readability pass. Strip ad/nav/social/related-articles from the CLONE
+  // before parsing — this both prevents Readability from including those
+  // blocks in its output AND helps it score the real article higher.
   const docClone = document.cloneNode(/* deep */ true) as Document
+  const junkRemoved = removeJunkNodes(docClone)
   const reader = new Readability(docClone)
   const parsed = reader.parse()
-  const readabilityText = (parsed?.textContent ?? '').trim()
-  const readabilityWords = countWords(readabilityText)
+  const readabilityRaw = (parsed?.textContent ?? '').trim()
+  const readabilityClean = cleanArticleText(readabilityRaw)
+  const readabilityWords = countWords(readabilityClean)
 
-  // Fallback pass — runs unconditionally so we can compare.
-  const fallback = extractByLargestParagraphContainer()
-  const fallbackText = fallback.text
-  const fallbackWords = countWords(fallbackText)
+  // Fallback pass — runs on the LIVE document (innerText needs layout), but
+  // skips paragraphs whose ancestors look like ads/nav/etc. so we don't have
+  // to mutate the user's page.
+  const fallbackRaw = extractByLargestParagraphContainer().text
+  const fallbackClean = cleanArticleText(fallbackRaw)
+  const fallbackWords = countWords(fallbackClean)
 
-  // Pick whichever has substantially more readable content. We require
-  // fallback to beat Readability by at least 40% to avoid trading away
-  // Readability's good cleanup for marginal gains.
+  // Pick whichever has substantially more readable content. Require fallback
+  // to beat Readability by at least 40% to avoid trading away Readability's
+  // typically cleaner output for marginal gains.
   let method: 'readability' | 'fallback'
   let finalText: string
   let finalHtml: string
 
-  if (
-    readabilityWords > 0 &&
-    readabilityWords * 1.4 >= fallbackWords
-  ) {
+  if (readabilityWords > 0 && readabilityWords * 1.4 >= fallbackWords) {
     method = 'readability'
-    finalText = readabilityText
+    finalText = readabilityClean
     finalHtml = DOMPurify.sanitize(parsed?.content ?? '', {
       USE_PROFILES: { html: true },
     })
   } else if (fallbackWords > 0) {
     method = 'fallback'
-    finalText = fallbackText
-    // Wrap the fallback text in <p> tags so the eventual rsvp converter sees
-    // paragraph structure the same way it does for Readability output.
+    finalText = fallbackClean
     finalHtml = DOMPurify.sanitize(
-      fallbackText
+      fallbackClean
         .split('\n\n')
         .map((p) => `<p>${escapeHtml(p)}</p>`)
         .join('\n'),
       { USE_PROFILES: { html: true } },
     )
   } else {
-    // Nothing worked.
     throw new Error(
       'Could not extract any readable text from this page. ' +
         'It may be a paywall, an app shell, or content rendered after our wait.',
@@ -115,6 +117,7 @@ async function extractArticle(): Promise<ExtractedArticle> {
       readabilityWords,
       fallbackWords,
       expandersClicked,
+      junkRemoved,
     },
   }
 }

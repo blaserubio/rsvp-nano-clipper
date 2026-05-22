@@ -23,6 +23,7 @@ export interface ExtractedArticle {
     readabilityWords: number
     fallbackWords: number
     expandersClicked: number
+    junkRemoved: number
   }
 }
 

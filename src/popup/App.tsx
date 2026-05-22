@@ -106,7 +106,9 @@ function ArticleBlock({
           {' / '}
           fallback {article.diagnostics.fallbackWords.toLocaleString()} w
           {article.diagnostics.expandersClicked > 0 &&
-            ` · clicked ${article.diagnostics.expandersClicked} expander${article.diagnostics.expandersClicked === 1 ? '' : 's'}`}
+            ` · expanded ${article.diagnostics.expandersClicked}`}
+          {article.diagnostics.junkRemoved > 0 &&
+            ` · stripped ${article.diagnostics.junkRemoved} junk`}
         </div>
       </div>
 
