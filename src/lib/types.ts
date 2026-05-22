@@ -64,3 +64,42 @@ export type ContentMessage =
   | HighlightRequest
   | UnhighlightRequest
   | ScrollRequest
+
+// --- v1.1: settings + device transport -------------------------------------
+
+/** User-configurable settings, persisted in chrome.storage.local. */
+export interface Settings {
+  /** Canonical, normalised endpoint URL (no trailing slash). */
+  endpoint: string
+}
+
+/** Trimmed slice of GET /api/info used to confirm reachability and identity. */
+export interface DeviceInfo {
+  name: string
+  version: string | null
+  mode: string | null
+  networkSsid: string | null
+  pairingCode: string | null
+}
+
+/** What uploadArticle needs to do its work — a converted .rsvp ready to POST. */
+export interface RsvpFileForUpload {
+  filename: string
+  content: string
+}
+
+/**
+ * Result of an uploadArticle call. Always returned (never thrown) so the
+ * caller can branch on `kind` to decide UI behaviour:
+ *   - 'ok'          : success; show confirmation
+ *   - 'timeout'     : we aborted the request; reader probably hung mid-upload
+ *   - 'unreachable' : network failed before reaching the reader
+ *   - 'rejected'    : reader responded 4xx (e.g. invalid filename, file exists)
+ *   - 'error'       : reader responded 5xx or returned unparsable content
+ */
+export type UploadResult =
+  | { kind: 'ok'; filename: string }
+  | { kind: 'timeout'; timeoutMs: number }
+  | { kind: 'unreachable'; detail: string }
+  | { kind: 'rejected'; status: number; message: string }
+  | { kind: 'error'; status: number; message: string }

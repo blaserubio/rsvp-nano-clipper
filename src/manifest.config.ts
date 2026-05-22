@@ -1,11 +1,10 @@
 import { defineManifest } from '@crxjs/vite-plugin'
 import packageJson from '../package.json' with { type: 'json' }
 
-// Permissions are scoped to what the v1 feature set actually uses
-// (extract → convert → download). When direct device POST, the article
-// queue, the context menu, and the periodic retry alarm land in later
-// versions, this file gains: host_permissions for the device endpoint,
-// 'contextMenus', 'storage', and 'alarms' respectively.
+// Permissions are scoped to what the v1.1 feature set actually uses
+// (extract → convert → send-or-download). When the article queue, the
+// context menu, and the periodic retry alarm land in later versions, this
+// file additionally gains 'contextMenus' and 'alarms' respectively.
 
 export default defineManifest({
   manifest_version: 3,
@@ -34,7 +33,17 @@ export default defineManifest({
   // activeTab — required to message the current tab on user gesture.
   // scripting — required to inject the content script on-demand into
   //   pages that were already open when the extension was installed.
-  permissions: ['activeTab', 'scripting'],
+  // storage   — persists the user's device endpoint (no secrets, no PII).
+  permissions: ['activeTab', 'scripting', 'storage'],
+  // The default device endpoint (Companion-sync AP) is pre-granted so the
+  // common case needs no runtime permission prompt.
+  host_permissions: ['http://192.168.4.1/*'],
+  // For users who put the reader on a custom IP / hostname, the popup's
+  // Settings panel calls chrome.permissions.request() at save time to
+  // grant just that origin. The wildcard here is the broadest pattern the
+  // user can ever opt into; the runtime request is for the specific origin
+  // they typed, not the wildcard.
+  optional_host_permissions: ['http://*/*', 'https://*/*'],
   commands: {
     // Reserved command name: pressing the shortcut opens the popup, same as
     // clicking the toolbar icon. We don't need a chrome.commands.onCommand

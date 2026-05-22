@@ -11,13 +11,21 @@ other boilerplate), converts it to the device's `.rsvp` format, and saves it
 to your Downloads. You then drop the file into the device's
 **Companion sync → Books** page from any browser.
 
-> **v1 scope.** This release covers extract → convert → **download**.
-> Direct device upload over Wi-Fi, an article queue, a context-menu entry,
-> a settings page, and an optional AI-extraction fallback are planned for
-> later versions. See [Roadmap](#roadmap) below.
+> **v1.1 scope.** Extract → convert → **send to the reader** over its
+> Companion-sync Wi-Fi network. Download is still available as a one-click
+> fallback when the reader is offline. An article queue with periodic
+> retry, a right-click context menu, and an optional AI-extraction
+> fallback are planned for later versions. See [Roadmap](#roadmap) below.
 
 ## Features
 
+- **One-click Send** straight to the reader over its Companion-sync Wi-Fi
+  network — no Download/upload dance. Falls back to Download if the
+  reader is unreachable, with the failure path one click away.
+- **Configurable device endpoint** in a collapsible Settings panel inside
+  the popup. Default is `http://192.168.4.1` (the IP the reader hosts in
+  Companion sync mode). Custom endpoints are supported and prompt for
+  host permission on save.
 - **One-click extraction** with Mozilla Readability, on-device only — no
   page content ever leaves your computer.
 - **Lazy-load + expander warmup**: scrolls the page and clicks any "Story
@@ -52,20 +60,32 @@ to your Downloads. You then drop the file into the device's
 
 ## How to use it
 
-1. Open any web article in your browser.
-2. Click the **RSVP Nano Web Clipper** toolbar icon (or press **`⌘⇧S`** /
+1. On the reader: **`PWR` → `Companion sync`**. Join its Wi-Fi network
+   (`RSVP-Nano-xxxxxx`) from your computer.
+2. Open any web article in your browser.
+3. Click the **RSVP Nano Web Clipper** toolbar icon (or press **`⌘⇧S`** /
    **`Ctrl+Shift+S`** to open the popup with the keyboard).
-3. Wait ~1–2 seconds while the extension warms the page up and extracts.
-4. Optional: click **"🔍 Highlight every kept block"** to verify what got
+4. Wait ~1–2 seconds while the extension warms the page up and extracts.
+5. Optional: click **"🔍 Highlight every kept block"** to verify what got
    captured. Use **"↑ Jump to start"** / **"↓ Jump to end"** to confirm
    the boundaries.
-5. Click **"Download .rsvp"** — the file lands in your Downloads with a
-   `YYYY-MM-DD_short-slug.rsvp` filename.
-6. On your RSVP Nano: **`PWR` → Companion sync**. Join the
-   `RSVP-Nano-xxxxxx` Wi-Fi network. Open `http://192.168.4.1` in any
-   browser. Drop the `.rsvp` into the **Books** page.
-7. Hold `PWR` on the reader to exit Companion sync, then open the article
-   from the **Books** menu and read.
+6. Click **"📡 Send to RSVP Nano"** — popup confirms `"✓ Sent to <reader
+   name>"` once the upload succeeds.
+7. Hold `PWR` on the reader to exit Companion sync, then open the
+   article from the **Articles** menu and read.
+
+If the reader is unreachable (e.g. Companion sync is off, or your
+computer isn't joined to its Wi-Fi), the popup shows the error and a
+one-click **"Download .rsvp instead"** button that saves the file to
+your Downloads. From there, drop it into the reader's
+`http://192.168.4.1` **Books** page the next time you're connected.
+
+### Using a custom device endpoint
+
+If you've configured a static IP / mDNS name for the reader, open the
+**⚙️ Reader endpoint** panel at the top of the popup, type the URL, and
+click **Save**. Chrome will prompt to grant permission for that origin
+(once). Then **Send** posts there instead of the default.
 
 ## Install for development (unpacked)
 
@@ -102,10 +122,13 @@ npm run dev   # Vite dev server; writes a live-updating extension to dist/
 npm test
 ```
 
-31 unit tests cover the `.rsvp` converter (header, chapters, paragraphs,
+59 unit tests cover the `.rsvp` converter (header, chapters, paragraphs,
 word wrap, Unicode handling, accented-Latin preservation, emoji stripping,
-slugification, filename format, and an end-to-end realistic-article shape
-check).
+slugification, filename format, end-to-end realistic-article shape),
+the settings endpoint normaliser (scheme defaulting, trailing-slash
+stripping, validation), and the device client (multipart POST shape,
+15-second AbortController timeout, and error categorisation across
+network / 4xx / 5xx / parse failure).
 
 ## Permissions
 
@@ -113,11 +136,14 @@ check).
 | --- | --- |
 | `activeTab` | Read the current page's DOM **only when you click the extension**. |
 | `scripting` | Inject the content script on-demand into pages that were already open when the extension was installed. |
+| `storage` | Persist the device endpoint URL between sessions. Stores **only** the endpoint string — no secrets, no per-article state, no PII. |
+| `host_permissions: http://192.168.4.1/*` | The default Companion-sync IP the reader hosts. Pre-granted so the common case needs no runtime prompt. |
+| `optional_host_permissions: http://*/* + https://*/*` | The match patterns the popup uses to request just-in-time access to a custom endpoint you save in Settings. The wildcard is the largest set you could ever opt into; the runtime request asks for only the specific origin you typed. |
 | Content script on `<all_urls>` | Auto-injects passively on page load so the popup can extract without a chrome.scripting round-trip. It does nothing until it receives a message. |
 
-The extension **does not** request broad `<all_urls>` host permissions,
-storage, or context-menu permissions in v1. See [`PRIVACY.md`](PRIVACY.md)
-for a full data-handling statement.
+The extension **does not** request `contextMenus` or `alarms`
+permissions in v1.1. See [`PRIVACY.md`](PRIVACY.md) for a full
+data-handling statement.
 
 ## Device upload contract
 
@@ -140,19 +166,18 @@ References:
 
 ## Roadmap
 
-These are deferred to keep v1 small and reviewable. They expand the
-manifest's permission set when they land:
+These are deferred to keep each release small and reviewable. They
+expand the manifest's permission set when they land:
 
-- **Direct device POST** (adds `host_permissions: ['http://192.168.4.1/*']`)
 - **Article queue + periodic retry** when the reader is unreachable
-  (adds `storage`, `alarms`)
+  (adds `alarms`)
 - **Right-click context menu** "Send to RSVP Nano" on pages, selections,
   and links (adds `contextMenus`)
-- **Settings page** for device endpoint, AI-fallback endpoint, and
-  auto-send vs preview-first toggles
 - **AI extraction fallback** for paywalled / app-shell pages that
   Readability can't crack (adds an optional configurable host permission
   to the user's chosen AI endpoint)
+- **Auto-send toggle** so the popup pings the device immediately without
+  the user pressing Send
 
 ## Security and privacy
 

@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 
+import { fetchDeviceInfo, uploadArticle } from '../lib/deviceClient'
 import {
   extractFromActiveTab,
   highlightInActiveTab,
@@ -7,7 +8,15 @@ import {
   unhighlightInActiveTab,
 } from '../lib/extractor'
 import { articleToRsvp } from '../lib/rsvpFormat'
-import type { ExtractedArticle } from '../lib/types'
+import {
+  DEFAULT_ENDPOINT,
+  endpointOriginPattern,
+  isDefaultEndpoint,
+  loadSettings,
+  normalizeEndpoint,
+  saveSettings,
+} from '../lib/settings'
+import type { DeviceInfo, ExtractedArticle, Settings } from '../lib/types'
 
 type ExtractState =
   | { kind: 'idle' }
@@ -18,24 +27,25 @@ type ExtractState =
 const PREVIEW_CHARS = 4000
 
 export function App() {
-  const [state, setState] = useState<ExtractState>({ kind: 'idle' })
+  const [extract, setExtract] = useState<ExtractState>({ kind: 'idle' })
+  const [settings, setSettings] = useState<Settings | null>(null)
 
   async function runExtract(): Promise<void> {
-    setState({ kind: 'loading' })
+    setExtract({ kind: 'loading' })
     try {
       const article = await extractFromActiveTab()
-      setState({ kind: 'ok', article })
+      setExtract({ kind: 'ok', article })
     } catch (e) {
-      setState({
+      setExtract({
         kind: 'error',
         message: e instanceof Error ? e.message : 'Unknown error.',
       })
     }
   }
 
-  // Auto-extract when the popup opens — saves a click.
   useEffect(() => {
     void runExtract()
+    void loadSettings().then(setSettings)
   }, [])
 
   return (
@@ -54,41 +64,279 @@ export function App() {
           RSVP Nano Web Clipper
         </h1>
         <div style={{ fontSize: 11, color: '#888' }}>
-          Step 1 · extraction preview · no transfer yet
+          Extract · convert · send to reader
         </div>
       </header>
 
-      {state.kind === 'loading' && (
+      <SettingsPanel
+        settings={settings}
+        onChange={(next) => setSettings(next)}
+      />
+
+      {extract.kind === 'loading' && (
         <div style={statusBoxStyle}>Extracting article…</div>
       )}
 
-      {state.kind === 'error' && (
-        <ErrorBlock message={state.message} onRetry={runExtract} />
+      {extract.kind === 'error' && (
+        <ErrorBlock message={extract.message} onRetry={runExtract} />
       )}
 
-      {state.kind === 'ok' && (
-        <ArticleBlock article={state.article} onRetry={runExtract} />
+      {extract.kind === 'ok' && (
+        <ArticleBlock
+          article={extract.article}
+          endpoint={settings?.endpoint ?? DEFAULT_ENDPOINT}
+          onRetry={runExtract}
+        />
       )}
     </div>
   )
 }
 
+// ---------------------------------------------------------------------------
+// Settings panel — collapsible; manages the device endpoint setting.
+// ---------------------------------------------------------------------------
+
+function SettingsPanel({
+  settings,
+  onChange,
+}: {
+  settings: Settings | null
+  onChange: (next: Settings) => void
+}): React.ReactElement {
+  const [open, setOpen] = useState(false)
+  const [draft, setDraft] = useState('')
+  const [error, setError] = useState<string | null>(null)
+  const [testResult, setTestResult] = useState<
+    | { kind: 'idle' }
+    | { kind: 'busy' }
+    | { kind: 'ok'; info: DeviceInfo }
+    | { kind: 'err'; msg: string }
+  >({ kind: 'idle' })
+
+  // Sync draft when settings load or change externally.
+  useEffect(() => {
+    if (settings) setDraft(settings.endpoint)
+  }, [settings])
+
+  if (!settings) {
+    // Settings load is fast; render a tiny placeholder rather than nothing.
+    return <div style={{ ...settingsRowStyle, color: '#888' }}>Loading settings…</div>
+  }
+
+  const currentEndpoint = settings.endpoint
+  const isCustom = !isDefaultEndpoint(currentEndpoint)
+
+  async function handleSave(): Promise<void> {
+    setError(null)
+    let normalised: string
+    try {
+      normalised = normalizeEndpoint(draft)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Invalid URL.')
+      return
+    }
+
+    // For non-default endpoints, request the host permission first. Chrome
+    // shows the user a prompt; we only persist if they grant it.
+    if (!isDefaultEndpoint(normalised)) {
+      let granted = false
+      try {
+        granted = await chrome.permissions.request({
+          origins: [endpointOriginPattern(normalised)],
+        })
+      } catch (e) {
+        setError(
+          `Could not request permission for ${normalised}: ${e instanceof Error ? e.message : 'unknown error'}`,
+        )
+        return
+      }
+      if (!granted) {
+        setError(
+          `Permission to reach ${normalised} was not granted. The default endpoint will keep working.`,
+        )
+        return
+      }
+    }
+
+    const next: Settings = { endpoint: normalised }
+    await saveSettings(next)
+    onChange(next)
+    setDraft(normalised)
+    setTestResult({ kind: 'idle' })
+  }
+
+  async function handleReset(): Promise<void> {
+    setError(null)
+    const next: Settings = { endpoint: DEFAULT_ENDPOINT }
+    await saveSettings(next)
+    onChange(next)
+    setDraft(DEFAULT_ENDPOINT)
+    setTestResult({ kind: 'idle' })
+  }
+
+  async function handleTest(): Promise<void> {
+    setTestResult({ kind: 'busy' })
+    let normalised: string
+    try {
+      normalised = normalizeEndpoint(draft)
+    } catch (e) {
+      setTestResult({
+        kind: 'err',
+        msg: e instanceof Error ? e.message : 'Invalid URL.',
+      })
+      return
+    }
+
+    // If the user hasn't yet saved this endpoint and it's non-default, fetch
+    // will fail with a permission error. Request first so Test is useful.
+    if (!isDefaultEndpoint(normalised)) {
+      const hasPermission = await chrome.permissions.contains({
+        origins: [endpointOriginPattern(normalised)],
+      })
+      if (!hasPermission) {
+        const granted = await chrome.permissions.request({
+          origins: [endpointOriginPattern(normalised)],
+        })
+        if (!granted) {
+          setTestResult({
+            kind: 'err',
+            msg: `Permission required to reach ${normalised}.`,
+          })
+          return
+        }
+      }
+    }
+
+    const res = await fetchDeviceInfo(normalised)
+    if (res.kind === 'ok') {
+      setTestResult({ kind: 'ok', info: res.info })
+    } else if (res.kind === 'unreachable') {
+      setTestResult({
+        kind: 'err',
+        msg: 'Reader unreachable. Is Companion sync on and are you joined to its Wi-Fi?',
+      })
+    } else if (res.kind === 'timeout') {
+      setTestResult({ kind: 'err', msg: 'Reader did not respond in time.' })
+    } else {
+      setTestResult({ kind: 'err', msg: res.message })
+    }
+  }
+
+  return (
+    <div style={settingsWrapperStyle}>
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        style={settingsHeaderStyle}
+        title="Configure the device endpoint"
+      >
+        <span>⚙️ Reader endpoint</span>
+        <span style={{ color: '#666', fontSize: 11 }}>
+          {currentEndpoint}
+          {isCustom ? ' · custom' : ' · default'}
+          <span style={{ marginLeft: 6, color: '#aaa' }}>{open ? '▾' : '▸'}</span>
+        </span>
+      </button>
+
+      {open && (
+        <div style={{ padding: '10px 12px' }}>
+          <label style={{ fontSize: 11, color: '#555', display: 'block', marginBottom: 4 }}>
+            Device URL
+          </label>
+          <input
+            type="text"
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            placeholder={DEFAULT_ENDPOINT}
+            spellCheck={false}
+            autoCapitalize="off"
+            autoCorrect="off"
+            style={inputStyle}
+          />
+
+          <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
+            <button
+              type="button"
+              onClick={handleSave}
+              style={{ ...buttonStyle, flex: 1 }}
+              disabled={draft.trim() === currentEndpoint}
+            >
+              Save
+            </button>
+            <button
+              type="button"
+              onClick={handleTest}
+              style={{ ...buttonStyle, flex: 1 }}
+              disabled={testResult.kind === 'busy'}
+            >
+              {testResult.kind === 'busy' ? 'Testing…' : 'Test connection'}
+            </button>
+            <button
+              type="button"
+              onClick={handleReset}
+              style={{ ...buttonStyle, flex: 1 }}
+              disabled={!isCustom && draft.trim() === DEFAULT_ENDPOINT}
+            >
+              Reset
+            </button>
+          </div>
+
+          {error && (
+            <div style={{ ...miniNoticeStyle, color: '#a02020' }}>{error}</div>
+          )}
+          {testResult.kind === 'ok' && (
+            <div style={{ ...miniNoticeStyle, color: '#1e5e1e' }}>
+              ✓ Connected to <strong>{testResult.info.name}</strong>
+              {testResult.info.version ? ` · ${testResult.info.version}` : ''}
+            </div>
+          )}
+          {testResult.kind === 'err' && (
+            <div style={{ ...miniNoticeStyle, color: '#a02020' }}>{testResult.msg}</div>
+          )}
+
+          <div style={{ fontSize: 10, color: '#999', marginTop: 6 }}>
+            Default is <code>{DEFAULT_ENDPOINT}</code> — the IP the reader hosts in
+            Companion sync mode. Custom endpoints prompt for permission on Save.
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Article block — extraction meta, Send (primary), highlight, preview,
+// Download (secondary), Re-extract.
+// ---------------------------------------------------------------------------
+
+type SendState =
+  | { kind: 'idle' }
+  | { kind: 'sending' }
+  | { kind: 'sent'; deviceName?: string; savedAs: string }
+  | { kind: 'failed'; message: string; canFallback: true }
+
 function ArticleBlock({
   article,
+  endpoint,
   onRetry,
 }: {
   article: ExtractedArticle
+  endpoint: string
   onRetry: () => void
 }): React.ReactElement {
   const words = countWords(article.textContent)
+  const [send, setSend] = useState<SendState>({ kind: 'idle' })
   const [downloadMsg, setDownloadMsg] = useState<
     { tone: 'ok' | 'err'; text: string } | null
   >(null)
   const [highlight, setHighlight] = useState<
-    { kind: 'off' } | { kind: 'on'; count: number } | { kind: 'busy' } | { kind: 'err'; msg: string }
+    | { kind: 'off' }
+    | { kind: 'on'; count: number }
+    | { kind: 'busy' }
+    | { kind: 'err'; msg: string }
   >({ kind: 'off' })
 
-  function handleDownload(): void {
+  function performDownload(): { ok: boolean; filename?: string; error?: string } {
     try {
       const rsvp = articleToRsvp(article)
       triggerDownload(rsvp.filename, rsvp.content)
@@ -96,12 +344,68 @@ function ArticleBlock({
         tone: 'ok',
         text: `Saved ${rsvp.filename} · ${rsvp.wordCount.toLocaleString()} words, ${rsvp.chapterCount} chapter${rsvp.chapterCount === 1 ? '' : 's'}`,
       })
+      return { ok: true, filename: rsvp.filename }
     } catch (e) {
-      setDownloadMsg({
-        tone: 'err',
-        text: e instanceof Error ? e.message : 'Download failed.',
-      })
+      const error = e instanceof Error ? e.message : 'Download failed.'
+      setDownloadMsg({ tone: 'err', text: error })
+      return { ok: false, error }
     }
+  }
+
+  async function handleSend(): Promise<void> {
+    setSend({ kind: 'sending' })
+    setDownloadMsg(null)
+
+    let rsvp
+    try {
+      rsvp = articleToRsvp(article)
+    } catch (e) {
+      setSend({
+        kind: 'failed',
+        canFallback: true,
+        message: e instanceof Error ? e.message : 'Could not convert article.',
+      })
+      return
+    }
+
+    // Best to fetch a quick device-name for the success message. Fire in
+    // parallel with the upload — if it fails, we just don't show a name.
+    const infoPromise = fetchDeviceInfo(endpoint).catch(() => null)
+
+    const result = await uploadArticle(
+      { filename: rsvp.filename, content: rsvp.content },
+      endpoint,
+    )
+
+    if (result.kind === 'ok') {
+      const infoRes = await infoPromise
+      const deviceName =
+        infoRes && infoRes.kind === 'ok' ? infoRes.info.name : undefined
+      setSend({ kind: 'sent', deviceName, savedAs: result.filename })
+      return
+    }
+
+    let message: string
+    if (result.kind === 'unreachable') {
+      message =
+        `Reader unreachable at ${endpoint}. Open Companion sync on the reader and join its Wi-Fi (RSVP-Nano-xxxxxx).`
+    } else if (result.kind === 'timeout') {
+      message = `Reader did not respond within ${Math.round(result.timeoutMs / 1000)}s.`
+    } else if (result.kind === 'rejected') {
+      message = `Reader rejected the upload (HTTP ${result.status}): ${result.message}`
+    } else {
+      message = `Reader error (HTTP ${result.status}): ${result.message}`
+    }
+    setSend({ kind: 'failed', canFallback: true, message })
+  }
+
+  function handleDownloadFallback(): void {
+    performDownload()
+    setSend({ kind: 'idle' })
+  }
+
+  function handleDownloadDirect(): void {
+    performDownload()
   }
 
   async function handleShowOnPage(): Promise<void> {
@@ -109,8 +413,6 @@ function ArticleBlock({
     try {
       const count = await highlightInActiveTab(article.textContent)
       setHighlight({ kind: 'on', count })
-      // Auto-jump to the LAST extracted element so the user can see the
-      // boundary immediately — that's the whole point of this feature.
       try {
         await scrollInActiveTab('last')
       } catch {
@@ -178,6 +480,64 @@ function ArticleBlock({
         </div>
       </div>
 
+      {/* SEND — primary action */}
+      <div style={{ marginBottom: 10 }}>
+        {send.kind === 'idle' && (
+          <button type="button" onClick={handleSend} style={primaryButtonStyle}>
+            📡 Send to RSVP Nano
+          </button>
+        )}
+        {send.kind === 'sending' && (
+          <button type="button" disabled style={primaryButtonStyle}>
+            Sending…
+          </button>
+        )}
+        {send.kind === 'sent' && (
+          <div>
+            <button type="button" disabled style={successButtonStyle}>
+              ✓ Sent
+              {send.deviceName ? ` to ${send.deviceName}` : ''}
+            </button>
+            <div style={{ ...miniNoticeStyle, color: '#1e5e1e', marginTop: 4 }}>
+              Saved as <code>{send.savedAs}</code> in <code>/books/articles/</code>.
+              On the reader, exit Companion sync and open <strong>Articles</strong>.
+            </div>
+          </div>
+        )}
+        {send.kind === 'failed' && (
+          <div>
+            <div
+              style={{
+                ...statusBoxStyle,
+                background: '#fff5f5',
+                borderColor: '#f0c8c8',
+                color: '#a02020',
+                marginBottom: 8,
+              }}
+            >
+              {send.message}
+            </div>
+            <div style={{ display: 'flex', gap: 6 }}>
+              <button
+                type="button"
+                onClick={handleSend}
+                style={{ ...buttonStyle, flex: 1 }}
+              >
+                Retry send
+              </button>
+              <button
+                type="button"
+                onClick={handleDownloadFallback}
+                style={{ ...primaryButtonStyle, flex: 1 }}
+              >
+                Download .rsvp instead
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Highlight controls */}
       <div style={{ marginBottom: 8 }}>
         {highlight.kind === 'off' && (
           <button
@@ -250,7 +610,8 @@ function ArticleBlock({
         {article.textContent.length > PREVIEW_CHARS ? '\n…' : ''}
       </pre>
 
-      <button type="button" onClick={handleDownload} style={primaryButtonStyle}>
+      {/* Download — secondary action (always available, independent of Send) */}
+      <button type="button" onClick={handleDownloadDirect} style={buttonStyle}>
         Download .rsvp
       </button>
 
@@ -268,20 +629,21 @@ function ArticleBlock({
           }}
         >
           {downloadMsg.text}
-          {downloadMsg.tone === 'ok' && (
-            <div style={{ marginTop: 4, color: '#666' }}>
-              Open Companion sync on your reader, then drop this file into the Books page.
-            </div>
-          )}
         </div>
       )}
 
-      <button type="button" onClick={onRetry} style={buttonStyle}>
+      <button
+        type="button"
+        onClick={onRetry}
+        style={{ ...buttonStyle, marginTop: 8 }}
+      >
         Re-extract
       </button>
     </div>
   )
 }
+
+// ---------------------------------------------------------------------------
 
 function triggerDownload(filename: string, content: string): void {
   const blob = new Blob([content], { type: 'text/plain;charset=utf-8' })
@@ -293,7 +655,6 @@ function triggerDownload(filename: string, content: string): void {
   document.body.appendChild(a)
   a.click()
   document.body.removeChild(a)
-  // Give the browser a moment to start the download before releasing the URL.
   setTimeout(() => URL.revokeObjectURL(url), 1000)
 }
 
@@ -323,6 +684,10 @@ function ErrorBlock({
   )
 }
 
+// ---------------------------------------------------------------------------
+// Styles
+// ---------------------------------------------------------------------------
+
 const statusBoxStyle: React.CSSProperties = {
   fontSize: 12,
   padding: '10px 12px',
@@ -337,11 +702,11 @@ const metaCardStyle: React.CSSProperties = {
   background: '#fff',
   border: '1px solid #eee',
   borderRadius: 6,
-  marginBottom: 8,
+  marginBottom: 10,
 }
 
 const previewStyle: React.CSSProperties = {
-  maxHeight: 260,
+  maxHeight: 220,
   overflow: 'auto',
   fontSize: 11,
   lineHeight: 1.45,
@@ -371,6 +736,64 @@ const primaryButtonStyle: React.CSSProperties = {
   borderColor: '#1158c7',
   color: 'white',
   fontWeight: 600,
+}
+
+const successButtonStyle: React.CSSProperties = {
+  ...buttonStyle,
+  background: '#1e7e34',
+  borderColor: '#176a2c',
+  color: 'white',
+  fontWeight: 600,
+  cursor: 'default',
+}
+
+const settingsWrapperStyle: React.CSSProperties = {
+  background: '#fff',
+  border: '1px solid #eee',
+  borderRadius: 6,
+  marginBottom: 12,
+  overflow: 'hidden',
+}
+
+const settingsHeaderStyle: React.CSSProperties = {
+  width: '100%',
+  display: 'flex',
+  justifyContent: 'space-between',
+  alignItems: 'center',
+  padding: '8px 12px',
+  fontSize: 12,
+  fontWeight: 500,
+  background: '#fafafa',
+  border: 'none',
+  borderBottom: '1px solid #eee',
+  cursor: 'pointer',
+  textAlign: 'left',
+}
+
+const settingsRowStyle: React.CSSProperties = {
+  padding: '8px 12px',
+  fontSize: 12,
+  background: '#fafafa',
+  border: '1px solid #eee',
+  borderRadius: 6,
+  marginBottom: 12,
+}
+
+const inputStyle: React.CSSProperties = {
+  width: '100%',
+  padding: '6px 8px',
+  fontSize: 13,
+  border: '1px solid #c8c8c8',
+  borderRadius: 4,
+  boxSizing: 'border-box',
+  fontFamily:
+    'ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace',
+}
+
+const miniNoticeStyle: React.CSSProperties = {
+  fontSize: 11,
+  marginTop: 6,
+  lineHeight: 1.4,
 }
 
 function countWords(text: string): number {

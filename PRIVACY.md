@@ -19,7 +19,8 @@ after a user gesture.**
 
 ## What the extension does with that data
 
-Everything the extension does happens **locally inside your browser**:
+Everything the extension does happens **locally on your machine and on
+your local network** — nothing ever crosses the public internet:
 
 1. **Extraction** runs Mozilla Readability and a fallback paragraph-cluster
    walker on the page DOM. Junk is filtered (ads, navigation, related
@@ -28,41 +29,55 @@ Everything the extension does happens **locally inside your browser**:
 2. **Conversion** transforms the extracted text into the RSVP Nano
    device's `.rsvp` format. Unicode is normalised; emojis and unsupported
    characters are stripped.
-3. **Download** writes the resulting `.rsvp` file to your computer's
-   Downloads folder using a normal HTML5 `<a download>` click.
+3. **Send** (v1.1) POSTs the resulting `.rsvp` to the device's HTTP
+   endpoint (default `http://192.168.4.1/api/books`), reachable only over
+   the reader's own Companion-sync Wi-Fi network. This is a direct
+   peer-to-peer LAN call to a device you own. Nothing is sent anywhere
+   else.
+4. **Download** (always available, and the automatic fallback if Send
+   fails) writes the `.rsvp` file to your computer's Downloads folder
+   using a normal HTML5 `<a download>` click.
 
-That's the entire data flow in v1.
+That's the entire data flow in v1.1.
 
 ## What the extension does *not* do
 
-- **No network calls.** The extension makes zero outbound requests in v1.
-  Verify yourself with `grep -rn 'fetch\|XMLHttpRequest\|sendBeacon' src/`
-  in the source tree.
+- **No public-internet network calls.** The only network calls v1.1
+  makes are to the device endpoint you configure — by default the
+  Companion-sync IP `http://192.168.4.1`, which is the reader's own
+  Wi-Fi AP. If you change the endpoint to a custom value (e.g. a static
+  IP on your home network), the extension only talks to that endpoint.
+  Verify yourself: every `fetch` call in the source tree targets the
+  user-supplied endpoint (`grep -rn 'fetch(' src/`).
 - **No analytics, telemetry, error reporting, or crash reporting.**
 - **No user accounts, sign-in, or cloud sync.**
 - **No data shared with third parties.**
 - **No reading-history, bookmarks, browsing data, cookies, passwords,
   forms, or autofill** are accessed.
-- **No `storage` permission** is requested in v1. The extension stores no
-  state between sessions.
+- **No data retained between sessions** beyond a single field: the
+  device endpoint URL string (in `chrome.storage.local`). No article
+  content, no extraction history, no PII.
 - **No `<all_urls>` host permission**. The extension uses the `activeTab`
   pattern, so it can only see a page when you explicitly activate it.
 
-## What happens to the `.rsvp` file you download
+## What happens to the `.rsvp` file when you Send or Download
 
-The downloaded file is a normal file on your computer's disk. You choose
-when and how to send it to your RSVP Nano device. The recommended path —
-the device's own Companion-sync browser uploader at `http://192.168.4.1`
-— is a peer-to-peer connection over the device's own Wi-Fi network; the
-file never traverses the public internet.
+**Send** posts the file directly to the device's HTTP endpoint
+(`POST /api/books`) over the reader's Companion-sync Wi-Fi network.
+Peer-to-peer, never traverses the public internet. The file is
+transmitted in plain text (the device's API is HTTP, not HTTPS — same
+trust model as the device's own browser uploader).
+
+**Download** writes the file to your computer's Downloads folder. From
+there you choose how to get it onto the reader — typically by dropping
+it into the device's own `http://192.168.4.1` **Books** page in any
+browser.
 
 ## Roadmap features that change the privacy story
 
-The following are deliberately **not in v1** and will be disclosed
+The following are deliberately **not in v1.1** and will be disclosed
 explicitly when added:
 
-- **Direct device upload** will POST the file to `http://192.168.4.1` over
-  the device's local Wi-Fi network. Still no public-internet traffic.
 - **Article queue** will use `chrome.storage.local` to persist pending
   uploads when the device is offline. Local-only.
 - **Optional AI extraction fallback** for paywalled pages will, if and

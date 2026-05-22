@@ -17,7 +17,7 @@ patient.
 
 ## Threat model
 
-The extension's threat model is shaped by what it actually does in v1
+The extension's threat model is shaped by what it actually does in v1.1
 (see [`PRIVACY.md`](PRIVACY.md) for the full data-flow):
 
 | What it touches | How |
@@ -25,7 +25,8 @@ The extension's threat model is shaped by what it actually does in v1
 | The active tab's DOM | Read-only, on user gesture only (`activeTab`). |
 | The active tab's page (side effects) | Clicks visible "Show more" / "Story continues" buttons before extracting. Negative-pattern filter avoids subscribe / login / share / register / cookie-banner buttons. |
 | The local filesystem | One `<a download>` click per user request, into the user's Downloads folder. |
-| The network | **Nothing in v1.** Zero outbound requests. |
+| The network | **Only the user-configured device endpoint** (default `http://192.168.4.1`, custom endpoints opt-in via per-origin `chrome.permissions.request`). Two HTTP methods: `POST /api/books` (Send) and `GET /api/info` (Settings → Test connection). Both run only on user gesture. No telemetry, no analytics, no third-party calls. |
+| Persistent storage | `chrome.storage.local` holds exactly one value: the device endpoint URL string. No secrets, no PII, no article content. |
 
 ### What the extension is NOT a defence against
 
@@ -54,12 +55,23 @@ The extension's threat model is shaped by what it actually does in v1
   HTML by the extension or the device.)
 - **`DOMParser`** is used to parse the sanitised HTML into events — a
   parse-only, side-effect-free operation.
-- **Least-privilege manifest** (v1):
+- **Least-privilege manifest** (v1.1):
   - `activeTab` — only the page you've explicitly invoked the extension on.
   - `scripting` — only used to inject the bundled content script into
     pages that were already open at install time.
-  - No `<all_urls>` host permission. No `storage`. No `alarms`. No
-    `contextMenus`.
+  - `storage` — only `chrome.storage.local`, only the device endpoint
+    URL string. No secrets, no PII, no article content.
+  - `host_permissions: ['http://192.168.4.1/*']` — only the device's
+    default Companion-sync IP, pre-granted so the common case avoids
+    a permission prompt.
+  - `optional_host_permissions: ['http://*/*', 'https://*/*']` — the
+    match patterns the Settings panel passes to
+    `chrome.permissions.request()` *only* when the user types a custom
+    endpoint and clicks Save. The wildcard is the largest possible
+    set the user could opt into; the actual runtime request is for
+    just the specific origin they typed (e.g. `http://reader.local:8080/*`).
+    Chrome shows them a prompt; we only persist if they grant.
+  - No `<all_urls>` host permission. No `alarms`. No `contextMenus`.
 - **Content script is passive**: registered on all URLs at install time
   so the popup can message it without round-tripping `chrome.scripting`,
   but the only top-level code it runs is a `chrome.runtime.onMessage`
@@ -70,8 +82,19 @@ The extension's threat model is shaped by what it actually does in v1
 - **Default MV3 Content Security Policy** is preserved — no `unsafe-eval`,
   no `unsafe-inline`, no remote scripts. The extension cannot load code
   from outside its own bundle.
-- **No external network calls** in v1. Verifiable with
-  `grep -rnE 'fetch\(|XMLHttpRequest|navigator\.sendBeacon' src/`.
+- **Network calls only to the user-configured device endpoint** in v1.1.
+  The only `fetch` call sites are `src/lib/deviceClient.ts` (POST
+  `/api/books` for Send, GET `/api/info` for Settings → Test). Both
+  build the URL from `<endpoint>` (the user-controlled, normalised
+  setting); both fire only on a user gesture (clicking Send or Test);
+  both have a hard 15-second / 8-second `AbortController` timeout.
+  Verifiable with `grep -rnE 'fetch\(|XMLHttpRequest|sendBeacon' src/`.
+- **HTTP, not HTTPS**, to the device. The reader's API is HTTP-only
+  (same as its own web companion). Data is plaintext over the device's
+  local Wi-Fi network. Mixed-content rules don't apply to extension
+  contexts. Network is trust-boundary-aware: the connection only
+  succeeds when the user has joined the reader's AP, so an attacker
+  off that LAN cannot reach it.
 
 ## Supply chain
 
