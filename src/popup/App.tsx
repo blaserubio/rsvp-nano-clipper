@@ -184,9 +184,9 @@ function ArticleBlock({
             type="button"
             onClick={handleShowOnPage}
             style={buttonStyle}
-            title="Highlight every kept paragraph/heading on the page and jump to the last one"
+            title="Highlight every paragraph and heading the extractor kept"
           >
-            🔍 Show extracted on page
+            🔍 Highlight every kept block
           </button>
         )}
         {highlight.kind === 'busy' && (
@@ -196,6 +196,10 @@ function ArticleBlock({
         )}
         {highlight.kind === 'on' && (
           <div>
+            <div style={{ fontSize: 11, color: '#1e5e1e', marginBottom: 6 }}>
+              ✓ Highlighted all {highlight.count}{' '}
+              {highlight.count === 1 ? 'kept block' : 'kept blocks'} on the page
+            </div>
             <div
               style={{
                 display: 'flex',
@@ -207,15 +211,17 @@ function ArticleBlock({
                 type="button"
                 onClick={() => handleScroll('first')}
                 style={{ ...buttonStyle, flex: 1 }}
+                title="Scroll to the first highlighted block"
               >
-                ↑ First
+                ↑ Jump to start
               </button>
               <button
                 type="button"
                 onClick={() => handleScroll('last')}
                 style={{ ...buttonStyle, flex: 1 }}
+                title="Scroll to the last highlighted block"
               >
-                ↓ Last
+                ↓ Jump to end
               </button>
               <button
                 type="button"
@@ -224,11 +230,6 @@ function ArticleBlock({
               >
                 Hide
               </button>
-            </div>
-            <div style={{ fontSize: 11, color: '#1e5e1e' }}>
-              Highlighted {highlight.count}{' '}
-              {highlight.count === 1 ? 'block' : 'blocks'} on the page · jumped
-              to the last one
             </div>
           </div>
         )}

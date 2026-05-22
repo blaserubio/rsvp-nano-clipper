@@ -156,8 +156,8 @@ async function extractArticle(): Promise<ExtractedArticle> {
 
 const HIGHLIGHT_CLASS = '__rsvp-clipper-kept'
 const STYLE_ID = '__rsvp-clipper-style'
-const SIG_LEN = 60
-const MIN_PARA_FOR_SIG = 30
+const NEEDLE_LEN = 40
+const MIN_NEEDLE_LEN = 20
 
 // We remember the elements we last highlighted so scrollToKept('first'|'last')
 // can jump to a stable position without having to re-match.
@@ -193,30 +193,30 @@ function normalizeForMatch(s: string): string {
     .trim()
 }
 
-function signaturesFromText(text: string): Set<string> {
-  const sigs = new Set<string>()
-  for (const para of text.split(/\n{2,}/)) {
-    const cleaned = normalizeForMatch(para)
-    if (cleaned.length < MIN_PARA_FOR_SIG) continue
-    sigs.add(cleaned.slice(0, SIG_LEN))
-  }
-  return sigs
-}
-
 function findKeptElements(extractedText: string): Element[] {
-  const sigs = signaturesFromText(extractedText)
-  if (sigs.size === 0) return []
+  // Build one big normalised haystack from the entire extracted body. Any live
+  // element whose opening text (a substring "needle") appears anywhere in it
+  // is considered kept. This is much more forgiving than exact paragraph-
+  // boundary matching, because Readability sometimes merges or splits
+  // paragraphs relative to the live DOM, and we want EVERY surviving block
+  // marked, not just the ones whose paragraph break aligned.
+  const haystack = normalizeForMatch(extractedText)
+  if (haystack.length < MIN_NEEDLE_LEN) return []
+
   const matched: Element[] = []
   const candidates = document.querySelectorAll<HTMLElement>(
     'p, h1, h2, h3, h4, h5, h6, li, blockquote',
   )
   for (const el of candidates) {
     const text = (el.innerText ?? '').trim()
-    if (text.length < 20) continue
-    const sig = normalizeForMatch(text).slice(0, SIG_LEN)
-    if (sigs.has(sig)) matched.push(el)
+    if (text.length < MIN_NEEDLE_LEN) continue
+    const normalised = normalizeForMatch(text)
+    if (normalised.length < MIN_NEEDLE_LEN) continue
+    const needle = normalised.slice(0, NEEDLE_LEN)
+    if (needle.length < MIN_NEEDLE_LEN) continue
+    if (haystack.includes(needle)) matched.push(el)
   }
-  // De-dup by reference (querySelectorAll already returns unique set, but
+  // De-dup by reference (querySelectorAll already returns a unique set, but
   // headings and paragraphs can in theory be nested so be safe).
   return Array.from(new Set(matched))
 }
