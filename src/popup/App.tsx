@@ -1,6 +1,11 @@
 import { useEffect, useState } from 'react'
 
-import { extractFromActiveTab } from '../lib/extractor'
+import {
+  extractFromActiveTab,
+  highlightInActiveTab,
+  scrollInActiveTab,
+  unhighlightInActiveTab,
+} from '../lib/extractor'
 import { articleToRsvp } from '../lib/rsvpFormat'
 import type { ExtractedArticle } from '../lib/types'
 
@@ -79,6 +84,9 @@ function ArticleBlock({
   const [downloadMsg, setDownloadMsg] = useState<
     { tone: 'ok' | 'err'; text: string } | null
   >(null)
+  const [highlight, setHighlight] = useState<
+    { kind: 'off' } | { kind: 'on'; count: number } | { kind: 'busy' } | { kind: 'err'; msg: string }
+  >({ kind: 'off' })
 
   function handleDownload(): void {
     try {
@@ -93,6 +101,43 @@ function ArticleBlock({
         tone: 'err',
         text: e instanceof Error ? e.message : 'Download failed.',
       })
+    }
+  }
+
+  async function handleShowOnPage(): Promise<void> {
+    setHighlight({ kind: 'busy' })
+    try {
+      const count = await highlightInActiveTab(article.textContent)
+      setHighlight({ kind: 'on', count })
+      // Auto-jump to the LAST extracted element so the user can see the
+      // boundary immediately — that's the whole point of this feature.
+      try {
+        await scrollInActiveTab('last')
+      } catch {
+        /* non-fatal */
+      }
+    } catch (e) {
+      setHighlight({
+        kind: 'err',
+        msg: e instanceof Error ? e.message : 'Highlight failed.',
+      })
+    }
+  }
+
+  async function handleHideOnPage(): Promise<void> {
+    try {
+      await unhighlightInActiveTab()
+    } catch {
+      /* best-effort cleanup */
+    }
+    setHighlight({ kind: 'off' })
+  }
+
+  async function handleScroll(which: 'first' | 'last'): Promise<void> {
+    try {
+      await scrollInActiveTab(which)
+    } catch {
+      /* non-fatal */
     }
   }
 
@@ -131,6 +176,72 @@ function ArticleBlock({
           {article.diagnostics.junkRemoved > 0 &&
             ` · stripped ${article.diagnostics.junkRemoved} junk`}
         </div>
+      </div>
+
+      <div style={{ marginBottom: 8 }}>
+        {highlight.kind === 'off' && (
+          <button
+            type="button"
+            onClick={handleShowOnPage}
+            style={buttonStyle}
+            title="Highlight every kept paragraph/heading on the page and jump to the last one"
+          >
+            🔍 Show extracted on page
+          </button>
+        )}
+        {highlight.kind === 'busy' && (
+          <button type="button" disabled style={buttonStyle}>
+            Highlighting…
+          </button>
+        )}
+        {highlight.kind === 'on' && (
+          <div>
+            <div
+              style={{
+                display: 'flex',
+                gap: 6,
+                marginBottom: 6,
+              }}
+            >
+              <button
+                type="button"
+                onClick={() => handleScroll('first')}
+                style={{ ...buttonStyle, flex: 1 }}
+              >
+                ↑ First
+              </button>
+              <button
+                type="button"
+                onClick={() => handleScroll('last')}
+                style={{ ...buttonStyle, flex: 1 }}
+              >
+                ↓ Last
+              </button>
+              <button
+                type="button"
+                onClick={handleHideOnPage}
+                style={{ ...buttonStyle, flex: 1 }}
+              >
+                Hide
+              </button>
+            </div>
+            <div style={{ fontSize: 11, color: '#1e5e1e' }}>
+              Highlighted {highlight.count}{' '}
+              {highlight.count === 1 ? 'block' : 'blocks'} on the page · jumped
+              to the last one
+            </div>
+          </div>
+        )}
+        {highlight.kind === 'err' && (
+          <div>
+            <button type="button" onClick={handleShowOnPage} style={buttonStyle}>
+              🔍 Show extracted on page
+            </button>
+            <div style={{ fontSize: 11, color: '#a02020', marginTop: 4 }}>
+              {highlight.msg}
+            </div>
+          </div>
+        )}
       </div>
 
       <pre style={previewStyle}>

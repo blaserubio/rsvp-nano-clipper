@@ -1,37 +1,33 @@
-import type { ExtractResponse, ExtractedArticle } from './types'
+import type {
+  ContentMessage,
+  ExtractResponse,
+  ExtractedArticle,
+  SimpleResponse,
+} from './types'
 
 /**
- * Ask the active tab to extract the current article via Readability.
- *
- * Fast path: send a message to the already-present content script.
- *
- * Fallback: if the message fails ("Receiving end does not exist") it usually
- * means the page was loaded before this extension was installed/reloaded, so
- * the auto-injected content script was never there. We programmatically
- * inject it on demand using chrome.scripting.executeScript and retry.
- *
- * A later step will also wire up the AI-endpoint fallback for when Readability
- * itself returns nothing useful.
+ * Send a message to the active tab's content script. If the message fails
+ * because the content script isn't there yet (the most common cause: page
+ * was open before the extension was installed/reloaded), inject it
+ * on-demand via chrome.scripting.executeScript and retry once.
  */
-export async function extractFromActiveTab(): Promise<ExtractedArticle> {
+async function sendToActiveTab<TResponse>(message: ContentMessage): Promise<TResponse> {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true })
   if (!tab?.id) {
     throw new Error('No active tab found.')
   }
   const tabId = tab.id
 
-  let response: ExtractResponse
   try {
-    response = await sendExtractRequest(tabId)
+    return (await chrome.tabs.sendMessage(tabId, message)) as TResponse
   } catch (firstError) {
-    // Most likely cause: page was open before the extension was installed.
     try {
       await injectContentScript(tabId)
     } catch (injectError) {
       throw new Error(formatInjectionFailure(injectError, tab.url))
     }
     try {
-      response = await sendExtractRequest(tabId)
+      return (await chrome.tabs.sendMessage(tabId, message)) as TResponse
     } catch (retryError) {
       throw new Error(
         `Injected the content script but the page still did not respond. ` +
@@ -39,17 +35,6 @@ export async function extractFromActiveTab(): Promise<ExtractedArticle> {
       )
     }
   }
-
-  if (!response.ok) {
-    throw new Error(response.error)
-  }
-  return response.article
-}
-
-async function sendExtractRequest(tabId: number): Promise<ExtractResponse> {
-  return (await chrome.tabs.sendMessage(tabId, {
-    type: 'extract',
-  })) as ExtractResponse
 }
 
 async function injectContentScript(tabId: number): Promise<void> {
@@ -67,8 +52,6 @@ async function injectContentScript(tabId: number): Promise<void> {
 
 function formatInjectionFailure(error: unknown, tabUrl: string | undefined): string {
   const msg = describe(error)
-  // Chrome refuses to inject into its own pages (chrome://, the Web Store,
-  // file:// without permission, etc.). Make that explanation explicit.
   if (
     tabUrl &&
     (tabUrl.startsWith('chrome://') ||
@@ -85,4 +68,33 @@ function formatInjectionFailure(error: unknown, tabUrl: string | undefined): str
 
 function describe(error: unknown): string {
   return error instanceof Error ? error.message : 'unknown error'
+}
+
+// ---------------------------------------------------------------------------
+// Public API used by the popup
+// ---------------------------------------------------------------------------
+
+export async function extractFromActiveTab(): Promise<ExtractedArticle> {
+  const response = await sendToActiveTab<ExtractResponse>({ type: 'extract' })
+  if (!response.ok) throw new Error(response.error)
+  return response.article
+}
+
+export async function highlightInActiveTab(textContent: string): Promise<number> {
+  const response = await sendToActiveTab<SimpleResponse>({
+    type: 'highlight',
+    textContent,
+  })
+  if (!response.ok) throw new Error(response.error)
+  return response.count
+}
+
+export async function unhighlightInActiveTab(): Promise<void> {
+  const response = await sendToActiveTab<SimpleResponse>({ type: 'unhighlight' })
+  if (!response.ok) throw new Error(response.error)
+}
+
+export async function scrollInActiveTab(which: 'first' | 'last'): Promise<void> {
+  const response = await sendToActiveTab<SimpleResponse>({ type: 'scroll', which })
+  if (!response.ok) throw new Error(response.error)
 }

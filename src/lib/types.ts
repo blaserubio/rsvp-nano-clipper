@@ -36,3 +36,31 @@ export interface ExtractRequest {
 export type ExtractResponse =
   | { ok: true; article: ExtractedArticle }
   | { ok: false; error: string }
+
+/** Ask the content script to visually highlight everything matching the
+ *  given extracted text. The text is matched back to live DOM elements
+ *  by first-N-char signature so we don't need to mutate the page during
+ *  extraction. */
+export interface HighlightRequest {
+  type: 'highlight'
+  textContent: string
+}
+
+export interface UnhighlightRequest {
+  type: 'unhighlight'
+}
+
+export interface ScrollRequest {
+  type: 'scroll'
+  which: 'first' | 'last'
+}
+
+export type SimpleResponse =
+  | { ok: true; count: number }
+  | { ok: false; error: string }
+
+export type ContentMessage =
+  | ExtractRequest
+  | HighlightRequest
+  | UnhighlightRequest
+  | ScrollRequest
