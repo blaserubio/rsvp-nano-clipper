@@ -15,6 +15,18 @@ export default defineManifest({
   action: {
     default_title: 'Send to RSVP Nano',
     default_popup: 'src/popup/popup.html',
+    default_icon: {
+      '16': 'public/icons/icon-16.png',
+      '32': 'public/icons/icon-32.png',
+      '48': 'public/icons/icon-48.png',
+      '128': 'public/icons/icon-128.png',
+    },
+  },
+  icons: {
+    '16': 'public/icons/icon-16.png',
+    '32': 'public/icons/icon-32.png',
+    '48': 'public/icons/icon-48.png',
+    '128': 'public/icons/icon-128.png',
   },
   background: {
     service_worker: 'src/background.ts',

@@ -1,5 +1,7 @@
 # RSVP Nano Web Clipper
 
+[![CI](https://github.com/blaserubio/rsvp-nano-clipper/actions/workflows/ci.yml/badge.svg)](https://github.com/blaserubio/rsvp-nano-clipper/actions/workflows/ci.yml)
+
 A Chromium browser extension (Chrome / Edge / Brave / Arc) that turns any web
 article into a [`.rsvp`](https://github.com/ionutdecebal/rsvpnano) file the
 [RSVP Nano](https://github.com/ionutdecebal/rsvpnano) reading device can
@@ -135,13 +137,27 @@ npm run dev   # Vite dev server; writes a live-updating extension to dist/
 npm test
 ```
 
-59 unit tests cover the `.rsvp` converter (header, chapters, paragraphs,
+99 unit tests cover the `.rsvp` converter (header, chapters, paragraphs,
 word wrap, Unicode handling, accented-Latin preservation, emoji stripping,
-slugification, filename format, end-to-end realistic-article shape),
-the settings endpoint normaliser (scheme defaulting, trailing-slash
-stripping, validation), and the device client (multipart POST shape,
-15-second AbortController timeout, and error categorisation across
-network / 4xx / 5xx / parse failure).
+slugification, filename format, end-to-end realistic-article shape), the
+settings endpoint normaliser (scheme defaulting, trailing-slash stripping,
+validation), the device client (multipart POST shape, 15-second
+AbortController timeout, and error categorisation across network / 4xx /
+5xx / parse failure), and the page-helpers extraction pipeline (junk
+filter on tags / classes / ARIA roles, link-dominated paragraph detection,
+text-level boilerplate stripping, article-container extractor with
+de-duplication, and the cluster-based fallback for sites without an
+`<article>` element).
+
+### Regenerate the icons
+
+The toolbar icons are produced from a tiny dependency-free PNG generator:
+
+```bash
+npm run icons   # rewrites public/icons/icon-{16,32,48,128}.png
+```
+
+Tweak the colours / glyph in `tools/make-icons.mjs`.
 
 ## Permissions
 
