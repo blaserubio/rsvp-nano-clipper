@@ -16,6 +16,13 @@ export interface ExtractedArticle {
   url: string
   /** Readability's own heuristic: does this page look like an article? */
   readerable: boolean
+  /**
+   * Publication date of the article, normalised to ISO `YYYY-MM-DD`.
+   * `null` when the page exposes no date in any of the sources we check
+   * (Readability `publishedTime`, common meta tags, `<time datetime>`,
+   * JSON-LD `datePublished`).
+   */
+  publishedDate: string | null
   /** Which extractor produced the final body. Useful for debugging. */
   method: 'readability' | 'fallback'
   /** Extraction diagnostics — word counts for the two paths. */

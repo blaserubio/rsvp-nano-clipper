@@ -1,6 +1,6 @@
 {
   "name": "rsvp-nano-clipper",
-  "version": "1.1.1",
+  "version": "1.2.0",
   "description": "Chromium browser extension that sends web articles to an RSVP Nano reading device.",
   "license": "MIT",
   "author": "Blas Rubio",

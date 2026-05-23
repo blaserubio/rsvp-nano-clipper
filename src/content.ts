@@ -140,6 +140,7 @@ async function extractArticle(): Promise<ExtractedArticle> {
     lang: parsed?.lang?.trim() || null,
     url: location.href,
     readerable: isProbablyReaderable(document),
+    publishedDate: extractPublishedDate(parsed),
     method,
     diagnostics: {
       readabilityWords,
@@ -148,6 +149,88 @@ async function extractArticle(): Promise<ExtractedArticle> {
       junkRemoved,
     },
   }
+}
+
+// ---------------------------------------------------------------------------
+// Published-date extraction.
+// First hit wins, in order: Readability's own publishedTime → common meta
+// tags → <time datetime> inside the article → JSON-LD datePublished.
+// All values normalised to ISO YYYY-MM-DD; invalid dates return null.
+// ---------------------------------------------------------------------------
+
+interface ReadabilityWithDate {
+  publishedTime?: string | null
+}
+
+function extractPublishedDate(parsed: unknown): string | null {
+  // 1. Readability — covers most modern news/blog sites already.
+  const rPublished = (parsed as ReadabilityWithDate | null | undefined)
+    ?.publishedTime
+  let iso = toIsoDate(rPublished ?? null)
+  if (iso) return iso
+
+  // 2. Common meta tags.
+  const metaSelectors: Array<[string, string]> = [
+    ['meta[property="article:published_time"]', 'content'],
+    ['meta[name="article:published_time"]', 'content'],
+    ['meta[itemprop="datePublished"]', 'content'],
+    ['meta[name="date"]', 'content'],
+    ['meta[name="pubdate"]', 'content'],
+    ['meta[name="DC.date.issued"]', 'content'],
+    ['meta[name="dcterms.created"]', 'content'],
+    ['meta[name="parsely-pub-date"]', 'content'],
+    ['meta[name="sailthru.date"]', 'content'],
+  ]
+  for (const [selector, attr] of metaSelectors) {
+    const el = document.querySelector(selector)
+    iso = toIsoDate(el?.getAttribute(attr) ?? null)
+    if (iso) return iso
+  }
+
+  // 3. <time datetime="…"> inside the main article container (or document).
+  const articleRoot = document.querySelector('article')
+  const time =
+    (articleRoot ?? document).querySelector('time[datetime]') ??
+    document.querySelector('time[datetime]')
+  iso = toIsoDate(time?.getAttribute('datetime') ?? null)
+  if (iso) return iso
+
+  // 4. JSON-LD datePublished. Pages can embed multiple LD blocks and even
+  // arrays of objects; walk them tolerantly.
+  const ldScripts = document.querySelectorAll<HTMLScriptElement>(
+    'script[type="application/ld+json"]',
+  )
+  for (const script of ldScripts) {
+    const raw = (script.textContent ?? '').trim()
+    if (!raw) continue
+    let data: unknown
+    try {
+      data = JSON.parse(raw)
+    } catch {
+      continue
+    }
+    const candidates = Array.isArray(data) ? data : [data]
+    for (const item of candidates) {
+      if (item && typeof item === 'object') {
+        const dp = (item as Record<string, unknown>).datePublished
+        if (typeof dp === 'string') {
+          iso = toIsoDate(dp)
+          if (iso) return iso
+        }
+      }
+    }
+  }
+
+  return null
+}
+
+function toIsoDate(raw: string | null): string | null {
+  if (!raw || typeof raw !== 'string') return null
+  const trimmed = raw.trim()
+  if (trimmed.length === 0) return null
+  const ms = Date.parse(trimmed)
+  if (Number.isNaN(ms)) return null
+  return new Date(ms).toISOString().slice(0, 10)
 }
 
 // ---------------------------------------------------------------------------

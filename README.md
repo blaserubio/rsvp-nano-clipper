@@ -22,6 +22,14 @@ to your Downloads. You then drop the file into the device's
 - **One-click Send** straight to the reader over its Companion-sync Wi-Fi
   network — no Download/upload dance. Falls back to Download if the
   reader is unreachable, with the failure path one click away.
+- **Editable title with article date prefix.** The popup pre-fills the
+  title field with `[YYYY-MM-DD] Article Title` when the page exposes a
+  publication date (Open Graph `article:published_time`, `<time>` tags,
+  JSON-LD `datePublished`, etc.). Edit freely before sending — the date
+  shows up on the reader's Articles list so a week of clips no longer
+  looks like a wall of identical headlines. Filenames use the article's
+  date too (with the prefix de-duplicated so you don't get
+  `2026-05-21_2026-05-21-…`).
 - **Configurable device endpoint** in a collapsible Settings panel inside
   the popup. Default is `http://192.168.4.1` (the IP the reader hosts in
   Companion sync mode). Custom endpoints are supported and prompt for
@@ -66,12 +74,17 @@ to your Downloads. You then drop the file into the device's
 3. Click the **RSVP Nano Web Clipper** toolbar icon (or press **`⌘⇧S`** /
    **`Ctrl+Shift+S`** to open the popup with the keyboard).
 4. Wait ~1–2 seconds while the extension warms the page up and extracts.
-5. Optional: click **"🔍 Highlight every kept block"** to verify what got
+5. Optional: tweak the **Title on reader** field (pre-filled with the
+   `[YYYY-MM-DD] Article Title` form when a publication date was found
+   on the page; just the article title otherwise). You can shorten long
+   titles, fix typos, add or remove the date — whatever appears in this
+   field is what shows on the reader.
+6. Optional: click **"🔍 Highlight every kept block"** to verify what got
    captured. Use **"↑ Jump to start"** / **"↓ Jump to end"** to confirm
    the boundaries.
-6. Click **"📡 Send to RSVP Nano"** — popup confirms `"✓ Sent to <reader
+7. Click **"📡 Send to RSVP Nano"** — popup confirms `"✓ Sent to <reader
    name>"` once the upload succeeds.
-7. Hold `PWR` on the reader to exit Companion sync, then open the
+8. Hold `PWR` on the reader to exit Companion sync, then open the
    article from the **Articles** menu and read.
 
 If the reader is unreachable (e.g. Companion sync is off, or your

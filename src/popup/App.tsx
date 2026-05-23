@@ -7,7 +7,7 @@ import {
   scrollInActiveTab,
   unhighlightInActiveTab,
 } from '../lib/extractor'
-import { articleToRsvp } from '../lib/rsvpFormat'
+import { articleToRsvp, formatTitleWithDate } from '../lib/rsvpFormat'
 import {
   DEFAULT_ENDPOINT,
   endpointOriginPattern,
@@ -460,9 +460,24 @@ function ArticleBlock({
     | { kind: 'err'; msg: string }
   >({ kind: 'off' })
 
+  // Editable title — pre-filled with the article's title (with a
+  // `[YYYY-MM-DD]` prefix when the publication date was extracted) so the
+  // user sees what will land on the reader and can tweak before sending.
+  const [editedTitle, setEditedTitle] = useState<string>(() =>
+    formatTitleWithDate(article.title, article.publishedDate),
+  )
+
+  function articleForConversion(): ExtractedArticle {
+    const trimmed = editedTitle.trim()
+    return {
+      ...article,
+      title: trimmed.length > 0 ? trimmed : article.title,
+    }
+  }
+
   function performDownload(): { ok: boolean; filename?: string; error?: string } {
     try {
-      const rsvp = articleToRsvp(article)
+      const rsvp = articleToRsvp(articleForConversion())
       triggerDownload(rsvp.filename, rsvp.content)
       setDownloadMsg({
         tone: 'ok',
@@ -482,7 +497,7 @@ function ArticleBlock({
 
     let rsvp
     try {
-      rsvp = articleToRsvp(article)
+      rsvp = articleToRsvp(articleForConversion())
     } catch (e) {
       setSend({
         kind: 'failed',
@@ -577,16 +592,60 @@ function ArticleBlock({
 
   return (
     <div>
+      <div style={titleFieldStyle}>
+        <label
+          htmlFor="rsvpnano-title"
+          style={{
+            display: 'block',
+            fontSize: 10,
+            fontWeight: 600,
+            color: '#666',
+            letterSpacing: 0.4,
+            textTransform: 'uppercase',
+            marginBottom: 4,
+          }}
+        >
+          Title on reader
+        </label>
+        <input
+          id="rsvpnano-title"
+          type="text"
+          value={editedTitle}
+          onChange={(e) => setEditedTitle(e.target.value)}
+          spellCheck={false}
+          style={{
+            width: '100%',
+            padding: '6px 8px',
+            fontSize: 13,
+            fontWeight: 600,
+            lineHeight: 1.35,
+            color: '#222',
+            border: '1px solid #d0d4d9',
+            borderRadius: 4,
+            background: '#fff',
+            boxSizing: 'border-box',
+          }}
+        />
+        {article.publishedDate && (
+          <div style={{ fontSize: 10, color: '#888', marginTop: 4 }}>
+            Article date: {article.publishedDate} · prefix added automatically;
+            edit freely.
+          </div>
+        )}
+        {!article.publishedDate && (
+          <div style={{ fontSize: 10, color: '#888', marginTop: 4 }}>
+            No publication date on the page — add one manually if you want it
+            to show on the reader.
+          </div>
+        )}
+      </div>
       <div style={metaCardStyle}>
-        <div style={{ fontSize: 13, fontWeight: 600, lineHeight: 1.35 }}>
-          {article.title}
-        </div>
         {article.byline && (
-          <div style={{ fontSize: 11, color: '#666', marginTop: 4 }}>
+          <div style={{ fontSize: 11, color: '#666' }}>
             {article.byline}
           </div>
         )}
-        <div style={{ fontSize: 11, color: '#888', marginTop: 6 }}>
+        <div style={{ fontSize: 11, color: '#888', marginTop: article.byline ? 6 : 0 }}>
           {words.toLocaleString()} words · {article.length.toLocaleString()}{' '}
           chars
           {article.siteName ? ` · ${article.siteName}` : ''}
@@ -827,6 +886,14 @@ const statusBoxStyle: React.CSSProperties = {
   border: '1px solid #eee',
   borderRadius: 6,
   marginBottom: 10,
+}
+
+const titleFieldStyle: React.CSSProperties = {
+  padding: '10px 12px',
+  background: '#f5f9ff',
+  border: '1px solid #cfdef5',
+  borderRadius: 6,
+  marginBottom: 8,
 }
 
 const metaCardStyle: React.CSSProperties = {

@@ -1,6 +1,14 @@
 import { describe, expect, it } from 'vitest'
 
-import { articleToRsvp, buildFilename, normalizeText, slugify } from '../src/lib/rsvpFormat'
+import {
+  articleToRsvp,
+  buildFilename,
+  formatTitleWithDate,
+  isIsoDateString,
+  normalizeText,
+  slugify,
+  stripLeadingDatePrefix,
+} from '../src/lib/rsvpFormat'
 import type { ExtractedArticle } from '../src/lib/types'
 
 function makeArticle(overrides: Partial<ExtractedArticle> = {}): ExtractedArticle {
@@ -15,6 +23,7 @@ function makeArticle(overrides: Partial<ExtractedArticle> = {}): ExtractedArticl
     lang: 'en',
     url: 'https://example.com/article',
     readerable: true,
+    publishedDate: null,
     method: 'readability',
     diagnostics: {
       readabilityWords: 2,
@@ -297,5 +306,143 @@ describe('articleToRsvp — round-trip / idempotency', () => {
     expect(out.wordCount).toBeGreaterThan(0)
     expect(text).toContain('"quotes"')
     expect(text).not.toMatch(/[—“”‘’]/) // smart punctuation folded
+  })
+})
+
+// ---------------------------------------------------------------------------
+// v1.2 — title-with-date helpers
+// ---------------------------------------------------------------------------
+
+describe('isIsoDateString', () => {
+  it('accepts well-formed YYYY-MM-DD strings', () => {
+    expect(isIsoDateString('2026-05-21')).toBe(true)
+    expect(isIsoDateString('1999-01-01')).toBe(true)
+  })
+
+  it('rejects everything else', () => {
+    expect(isIsoDateString(null)).toBe(false)
+    expect(isIsoDateString(undefined)).toBe(false)
+    expect(isIsoDateString('')).toBe(false)
+    expect(isIsoDateString('2026-5-21')).toBe(false)
+    expect(isIsoDateString('2026-05-21T12:00:00Z')).toBe(false)
+    expect(isIsoDateString('May 21, 2026')).toBe(false)
+  })
+})
+
+describe('formatTitleWithDate', () => {
+  it('prepends [YYYY-MM-DD] when a valid date is provided', () => {
+    expect(formatTitleWithDate('Hello World', '2026-05-21')).toBe(
+      '[2026-05-21] Hello World',
+    )
+  })
+
+  it('returns the title unchanged when publishedDate is null', () => {
+    expect(formatTitleWithDate('Hello World', null)).toBe('Hello World')
+  })
+
+  it('returns the title unchanged when publishedDate is undefined', () => {
+    expect(formatTitleWithDate('Hello World', undefined)).toBe('Hello World')
+  })
+
+  it('returns the title unchanged for ill-formed dates', () => {
+    expect(formatTitleWithDate('Hello', '2026-5-21')).toBe('Hello')
+    expect(formatTitleWithDate('Hello', 'tomorrow')).toBe('Hello')
+  })
+
+  it('is idempotent — does not double-prepend a date already in the title', () => {
+    expect(
+      formatTitleWithDate('[2026-05-21] Hello World', '2026-05-21'),
+    ).toBe('[2026-05-21] Hello World')
+  })
+
+  it('trims surrounding whitespace from the title', () => {
+    expect(formatTitleWithDate('   Hello   ', '2026-05-21')).toBe(
+      '[2026-05-21] Hello',
+    )
+  })
+})
+
+describe('stripLeadingDatePrefix', () => {
+  it('removes a leading [YYYY-MM-DD] and the space after it', () => {
+    expect(stripLeadingDatePrefix('[2026-05-21] Foo')).toBe('Foo')
+  })
+
+  it('handles multiple spaces between the prefix and title', () => {
+    expect(stripLeadingDatePrefix('[2026-05-21]   Foo')).toBe('Foo')
+  })
+
+  it('leaves the string unchanged when the date is not at the start', () => {
+    expect(stripLeadingDatePrefix('Foo [2026-05-21]')).toBe('Foo [2026-05-21]')
+  })
+
+  it('leaves malformed bracketed prefixes alone', () => {
+    expect(stripLeadingDatePrefix('[bad-date] Foo')).toBe('[bad-date] Foo')
+    expect(stripLeadingDatePrefix('[2026-5-21] Foo')).toBe('[2026-5-21] Foo')
+  })
+
+  it('handles empty / null-ish inputs without crashing', () => {
+    expect(stripLeadingDatePrefix('')).toBe('')
+  })
+})
+
+describe('buildFilename — article date awareness', () => {
+  it('uses the article date when provided', () => {
+    expect(
+      buildFilename('My Article', new Date('2026-05-21T00:00:00Z'), '2024-01-15'),
+    ).toBe('2024-01-15_my-article.rsvp')
+  })
+
+  it('falls back to today when publishedDate is null', () => {
+    expect(
+      buildFilename('My Article', new Date('2026-05-21T00:00:00Z'), null),
+    ).toBe('2026-05-21_my-article.rsvp')
+  })
+
+  it('ignores publishedDate when it is not a valid YYYY-MM-DD', () => {
+    expect(
+      buildFilename('My Article', new Date('2026-05-21T00:00:00Z'), 'tomorrow'),
+    ).toBe('2026-05-21_my-article.rsvp')
+  })
+
+  it('strips a leading [YYYY-MM-DD] from the title before slugifying', () => {
+    expect(
+      buildFilename(
+        '[2026-05-21] My Article',
+        new Date('2026-05-21T00:00:00Z'),
+        '2026-05-21',
+      ),
+    ).toBe('2026-05-21_my-article.rsvp')
+  })
+})
+
+describe('articleToRsvp — publishedDate flows into the filename', () => {
+  it('uses the article date when present', () => {
+    const out = articleToRsvp(
+      makeArticle({ title: 'Old Story', publishedDate: '2024-08-09' }),
+      FIXED_DATE,
+    )
+    expect(out.filename).toBe('2024-08-09_old-story.rsvp')
+  })
+
+  it('uses today when no publishedDate is on the article', () => {
+    const out = articleToRsvp(
+      makeArticle({ title: 'Fresh Story', publishedDate: null }),
+      FIXED_DATE,
+    )
+    expect(out.filename).toBe('2026-05-21_fresh-story.rsvp')
+  })
+
+  it('preserves a user-edited [YYYY-MM-DD] prefix in @title while keeping a clean filename', () => {
+    const out = articleToRsvp(
+      makeArticle({
+        title: '[2024-08-09] Old Story',
+        publishedDate: '2024-08-09',
+      }),
+      FIXED_DATE,
+    )
+    // @title carries the user-facing prefix the reader will display.
+    expect(out.content).toContain('@title [2024-08-09] Old Story')
+    // …but the filename doesn't get a doubled date.
+    expect(out.filename).toBe('2024-08-09_old-story.rsvp')
   })
 })

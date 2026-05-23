@@ -219,7 +219,7 @@ export function articleToRsvp(
   const content = lines.join('\n') + '\n'
 
   return {
-    filename: buildFilename(title, today),
+    filename: buildFilename(title, today, article.publishedDate),
     content,
     wordCount,
     chapterCount,
@@ -239,11 +239,25 @@ function findLastHeaderIndex(lines: string[]): number {
   return lastHeader
 }
 
-/** YYYY-MM-DD_slugified-title.rsvp */
-export function buildFilename(title: string, today: Date = new Date()): string {
-  const date = today.toISOString().slice(0, 10)
-  const slug = slugify(title, 60)
-  return `${date}_${slug || 'untitled'}.rsvp`
+/**
+ * `YYYY-MM-DD_slugified-title.rsvp`.
+ *
+ * If `publishedDate` is an ISO date string (`YYYY-MM-DD`), the filename uses
+ * that instead of today's date — so a clip of an old article sorts naturally
+ * in the Downloads folder by article date rather than clip date. Title is
+ * de-dated before slugifying so we don't end up with
+ * `2026-05-21_2026-05-21-article-title.rsvp`.
+ */
+export function buildFilename(
+  title: string,
+  today: Date = new Date(),
+  publishedDate: string | null = null,
+): string {
+  const datePart = isIsoDateString(publishedDate)
+    ? publishedDate
+    : today.toISOString().slice(0, 10)
+  const slug = slugify(stripLeadingDatePrefix(title), 60)
+  return `${datePart}_${slug || 'untitled'}.rsvp`
 }
 
 /** URL-safe, lowercase, dash-separated slug; accents stripped. */
@@ -256,4 +270,37 @@ export function slugify(text: string, maxLen = 60): string {
     .replace(/^-+|-+$/g, '')
     .slice(0, maxLen)
     .replace(/-+$/, '')
+}
+
+// ---------------------------------------------------------------------------
+// Title-date helpers — used by the popup so titles on the reader carry the
+// article's publication date in a compact, sortable prefix.
+// ---------------------------------------------------------------------------
+
+const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/
+const LEADING_DATE_PREFIX_RE = /^\[\d{4}-\d{2}-\d{2}\]\s*/
+
+/** True for strings shaped like `YYYY-MM-DD` (no time component). */
+export function isIsoDateString(value: string | null | undefined): value is string {
+  return typeof value === 'string' && ISO_DATE_RE.test(value)
+}
+
+/**
+ * Prepend `[YYYY-MM-DD]` to `title` when `publishedDate` is a valid ISO date.
+ * If the title already starts with a bracketed date, leaves it alone (idempotent).
+ * Returns the unchanged title when no usable date is available.
+ */
+export function formatTitleWithDate(
+  title: string,
+  publishedDate: string | null | undefined,
+): string {
+  const cleanTitle = (title ?? '').trim()
+  if (!isIsoDateString(publishedDate)) return cleanTitle
+  if (LEADING_DATE_PREFIX_RE.test(cleanTitle)) return cleanTitle
+  return `[${publishedDate}] ${cleanTitle}`
+}
+
+/** Remove a leading `[YYYY-MM-DD]` (and the single space after it) from `text`. */
+export function stripLeadingDatePrefix(text: string): string {
+  return (text ?? '').replace(LEADING_DATE_PREFIX_RE, '')
 }
